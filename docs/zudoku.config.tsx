@@ -9,7 +9,10 @@ const config: ZudokuConfig = {
   site: {
     title: "CanYouGrab API",
     logo: {
-      text: "CanYouGrab",
+      src: {
+        light: "https://placehold.co/200x40/white/333?text=CanYouGrab",
+        dark: "https://placehold.co/200x40/1a1a2e/white?text=CanYouGrab",
+      },
     },
   },
   metadata: {
