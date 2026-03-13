@@ -1,0 +1,136 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "My Zuplo API"
+  },
+  "paths": {
+    "/v1/domains/{domain}/availability": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Check Domain Availability",
+        "description": "Checks whether a given domain name is available for registration based on ICANN CZDS zone file data.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "https://api.canyougrab.it/api/check/${params.domain}"
+            }
+          },
+          "policies": {
+            "inbound": [
+              "api-key-inbound",
+              "rate-limit-inbound"
+            ]
+          }
+        },
+        "operationId": "new-route-8f9d13cd"
+      }
+    },
+    "/v1/domains/availability/bulk": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "post": {
+        "summary": "Bulk Domain Availability Check",
+        "description": "Check availability of multiple domain names in a single request. Maximum 500 domains per request.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "https://api.canyougrab.it/api/check/bulk"
+            }
+          },
+          "policies": {
+            "inbound": [
+              "api-key-inbound",
+              "rate-limit-inbound-1"
+            ]
+          }
+        },
+        "operationId": "new-route-5bccc068"
+      }
+    },
+    "/v1/tlds": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "List Supported TLDs",
+        "description": "Returns all 800+ top-level domains supported by the API, with record counts and last-updated timestamps.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "https://api.canyougrab.it/api/tlds"
+            }
+          },
+          "policies": {
+            "inbound": [
+              "api-key-inbound",
+              "rate-limit-inbound-2"
+            ]
+          }
+        },
+        "operationId": "new-route-96382847"
+      }
+    },
+    "/v1/account/usage": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Get Usage Summary",
+        "description": "Returns the current billing period usage summary for the authenticated API consumer, including lookups used and remaining quota.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "https://api.canyougrab.it/api/account/usage"
+            }
+          },
+          "policies": {
+            "inbound": [
+              "api-key-inbound",
+              "rate-limit-inbound-2"
+            ]
+          }
+        },
+        "operationId": "new-route-19a1a4e1"
+      }
+    },
+    "/v1/health": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Health Check",
+        "description": "Returns API health status. No authentication required.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "https://api.canyougrab.it/health"
+            }
+          },
+          "policies": {
+            "inbound": []
+          }
+        },
+        "operationId": "new-route-a03a27d1"
+      }
+    }
+  }
+}
