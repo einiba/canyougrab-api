@@ -22,48 +22,11 @@ const config: ZudokuConfig = {
   },
   navigation: [
     {
-      type: "category",
-      label: "Documentation",
-      items: [
-        {
-          type: "category",
-          label: "Getting Started",
-          icon: "sparkles",
-          items: [
-            {
-              type: "doc",
-              file: "introduction",
-            },
-            {
-              type: "doc",
-              file: "markdown",
-            },
-          ],
-        },
-        {
-          type: "category",
-          label: "Useful Links",
-          collapsible: false,
-          icon: "link",
-          items: [
-            {
-              type: "link",
-              label: "Zuplo Docs",
-              to: "https://zuplo.com/docs/dev-portal/introduction",
-            },
-            {
-              type: "link",
-              label: "Developer Portal Docs",
-              to: "https://zuplo.com/docs/dev-portal/introduction",
-            },
-          ],
-        },
-      ],
-    },
-    {
       type: "link",
-      to: "/api",
-      label: "API Reference",
+      to: "/settings/api-keys",
+      label: "API Keys",
+      display: "auth",
+      icon: "key",
     },
     {
       type: "custom-page",
@@ -73,8 +36,13 @@ const config: ZudokuConfig = {
       display: "auth",
       icon: "bar-chart",
     },
+    {
+      type: "link",
+      to: "/api",
+      label: "API Reference",
+    },
   ],
-  redirects: [{ from: "/", to: "/api" }],
+  redirects: [{ from: "/", to: "/settings/api-keys" }],
   apis: [
     {
       type: "file",
