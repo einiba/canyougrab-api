@@ -81,6 +81,39 @@ const config: ZudokuConfig = {
   },
   apiKeys: {
     enabled: true,
+    createKey: async ({ apiKey, context, auth }: any) => {
+      const serverUrl =
+        (typeof process !== "undefined" &&
+          process.env?.ZUPLO_PUBLIC_SERVER_URL) ||
+        (import.meta as any).env?.ZUPLO_SERVER_URL;
+      const createApiKeyRequest = new Request(
+        serverUrl + "/v1/developer/api-key",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...apiKey,
+            email: auth.profile?.email,
+            metadata: {
+              userId: auth.profile?.sub,
+              name: auth.profile?.name,
+            },
+          }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      const response = await fetch(
+        await context.signRequest(createApiKeyRequest),
+      );
+
+      if (!response.ok) {
+        throw new Error("Could not create API Key");
+      }
+
+      return true;
+    },
   },
 };
 

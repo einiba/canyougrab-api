@@ -59,6 +59,20 @@
       },
       "name": "rate-limit-inbound-2",
       "policyType": "rate-limit-inbound"
+    },
+    {
+      "handler": {
+        "export": "OpenIdJwtInboundPolicy",
+        "module": "$import(@zuplo/runtime)",
+        "options": {
+          "issuer": "https://dev-mqe5tavp6dr62e7u.us.auth0.com/",
+          "audience": "https://api.canyougrab.it",
+          "jwkUrl": "https://dev-mqe5tavp6dr62e7u.us.auth0.com/.well-known/jwks.json",
+          "allowUnauthenticatedRequests": false
+        }
+      },
+      "name": "open-id-jwt-auth-inbound",
+      "policyType": "open-id-jwt-auth-inbound"
     }
   ]
 }
