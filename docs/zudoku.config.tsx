@@ -1,4 +1,5 @@
 import type { ZudokuConfig } from "zudoku";
+import { UsageDashboard } from "./src/UsageDashboard.js";
 
 /**
  * Developer Portal Configuration
@@ -63,6 +64,14 @@ const config: ZudokuConfig = {
       type: "link",
       to: "/api",
       label: "API Reference",
+    },
+    {
+      type: "custom-page",
+      path: "/usage",
+      label: "Usage & Billing",
+      element: <UsageDashboard />,
+      display: "auth",
+      icon: "bar-chart",
     },
   ],
   redirects: [{ from: "/", to: "/api" }],

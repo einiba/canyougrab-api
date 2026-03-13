@@ -28,6 +28,30 @@
         "operationId": "create-developer-api-key",
         "x-internal": true
       }
+    },
+    "/v1/account/usage/detailed": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Get Detailed Usage",
+        "description": "Returns per-key and total usage data for the authenticated user.",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/usage-details)",
+            "options": {}
+          },
+          "policies": {
+            "inbound": [
+              "open-id-jwt-auth-inbound"
+            ]
+          }
+        },
+        "operationId": "get-detailed-usage",
+        "x-internal": true
+      }
     }
   }
 }
