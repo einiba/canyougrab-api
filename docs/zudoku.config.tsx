@@ -9,10 +9,7 @@ const config: ZudokuConfig = {
   site: {
     title: "CanYouGrab API",
     logo: {
-      src: {
-        light: "https://cdn.zuplo.com/assets/my-dev-portal-light.svg",
-        dark: "https://cdn.zuplo.com/assets/my-dev-portal-dark.svg",
-      },
+      text: "CanYouGrab",
     },
   },
   metadata: {
