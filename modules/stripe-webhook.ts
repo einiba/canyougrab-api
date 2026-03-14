@@ -99,15 +99,13 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object;
-      const auth0Sub = session.subscription_data?.metadata?.auth0_sub
-        || session.metadata?.auth0_sub;
 
-      if (!auth0Sub || !session.subscription) {
-        context.log.warn("checkout.session.completed missing auth0_sub or subscription");
+      if (!session.subscription) {
+        context.log.warn("checkout.session.completed missing subscription");
         break;
       }
 
-      // Fetch subscription to get the price
+      // Fetch subscription to get the price and auth0_sub
       const subRes = await fetch(
         `https://api.stripe.com/v1/subscriptions/${session.subscription}`,
         {
@@ -119,11 +117,19 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
       const sub = await subRes.json();
       const priceId = sub.items?.data?.[0]?.price?.id;
 
+      // Get auth0_sub from subscription metadata, session metadata, or customer metadata
+      const auth0Sub = sub.metadata?.auth0_sub
+        || session.metadata?.auth0_sub
+        || session.subscription_data?.metadata?.auth0_sub;
+
+      if (!auth0Sub) {
+        context.log.warn("checkout.session.completed: no auth0_sub found in subscription or session metadata");
+        break;
+      }
+
       if (priceId && PRICE_TO_PLAN_MAP[priceId]) {
         const { name, limit } = PRICE_TO_PLAN_MAP[priceId];
-        // Try to get auth0_sub from subscription metadata
-        const subAuth0 = sub.metadata?.auth0_sub || auth0Sub;
-        await updateConsumerPlan(subAuth0, name, limit, context);
+        await updateConsumerPlan(auth0Sub, name, limit, context);
       }
       break;
     }
