@@ -69,7 +69,7 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
       ? "bg-red-500"
       : pct >= 70
         ? "bg-yellow-500"
-        : "bg-emerald-500";
+        : "bg-primary";
 
   return (
     <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">

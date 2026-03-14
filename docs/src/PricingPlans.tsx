@@ -31,7 +31,7 @@ export function PricingPlans({
             key={plan.name}
             className={`border rounded-lg p-6 flex flex-col items-center text-center ${
               isCurrent
-                ? "border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-500/10"
+                ? "border-primary ring-2 ring-primary/30 bg-primary/10"
                 : ""
             }`}
           >
@@ -55,7 +55,7 @@ export function PricingPlans({
               {isCurrent ? (
                 <Button
                   variant="outline"
-                  className="w-full border-emerald-500 text-emerald-500 cursor-default pointer-events-none"
+                  className="w-full border-primary text-primary cursor-default pointer-events-none"
                   disabled
                 >
                   Current Plan

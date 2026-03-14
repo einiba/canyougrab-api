@@ -12,14 +12,78 @@ const config: ZudokuConfig = {
     title: "CanYouGrab API",
     logo: {
       src: {
-        light: "https://placehold.co/200x40/white/333?text=CanYouGrab",
-        dark: "https://placehold.co/200x40/1a1a2e/white?text=CanYouGrab",
+        light: "/logo-light.svg",
+        dark: "/logo-dark.svg",
       },
     },
   },
   metadata: {
     title: "CanYouGrab API",
     description: "Domain availability lookup API — fast, reliable, developer-friendly",
+  },
+  theme: {
+    fonts: {
+      sans: "Outfit",
+      mono: "JetBrains Mono",
+    },
+    dark: {
+      background: "#0a0b0d",
+      foreground: "#e8eaed",
+      card: "#12141a",
+      cardForeground: "#e8eaed",
+      popover: "#12141a",
+      popoverForeground: "#e8eaed",
+      primary: "#00d4aa",
+      primaryForeground: "#0a0b0d",
+      secondary: "#1a1d24",
+      secondaryForeground: "#e8eaed",
+      muted: "#1a1d24",
+      mutedForeground: "#8b8f98",
+      accent: "#1a1d24",
+      accentForeground: "#e8eaed",
+      destructive: "#ef4444",
+      destructiveForeground: "#ffffff",
+      border: "rgba(255, 255, 255, 0.06)",
+      input: "rgba(255, 255, 255, 0.06)",
+      ring: "#00d4aa",
+    },
+    light: {
+      background: "#ffffff",
+      foreground: "#1a1d24",
+      card: "#f8f9fa",
+      cardForeground: "#1a1d24",
+      popover: "#ffffff",
+      popoverForeground: "#1a1d24",
+      primary: "#00b892",
+      primaryForeground: "#ffffff",
+      secondary: "#f1f3f5",
+      secondaryForeground: "#1a1d24",
+      muted: "#f1f3f5",
+      mutedForeground: "#6b7280",
+      accent: "#f1f3f5",
+      accentForeground: "#1a1d24",
+      destructive: "#ef4444",
+      destructiveForeground: "#ffffff",
+      border: "#e5e7eb",
+      input: "#e5e7eb",
+      ring: "#00b892",
+    },
+    customCss: `
+      @font-face {
+        font-family: 'Outfit';
+        font-style: normal;
+        font-weight: 300 700;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/outfit/v11/QGYyz_MVcBeNP4NjuGObqx1XmO1I4TC1O4a0Ew.woff2) format('woff2');
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        font-style: normal;
+        font-weight: 400 500;
+        font-display: swap;
+        src: url(https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOTk6OThhvA.woff2) format('woff2');
+      }
+    `,
   },
   navigation: [
     {

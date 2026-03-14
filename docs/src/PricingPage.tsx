@@ -91,8 +91,8 @@ export function PricingPage() {
       </p>
 
       {checkoutStatus === "success" && (
-        <div className="border border-emerald-300 dark:border-emerald-800 rounded-lg p-4 bg-emerald-50 dark:bg-emerald-950 mb-6">
-          <p className="text-emerald-700 dark:text-emerald-400">
+        <div className="border border-primary/30 dark:border-primary/30 rounded-lg p-4 bg-primary/5 dark:bg-primary/10 mb-6">
+          <p className="text-primary dark:text-primary">
             Subscription activated! Your plan will be updated shortly.
           </p>
         </div>
