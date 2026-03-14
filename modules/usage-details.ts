@@ -46,9 +46,9 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
   if (userConsumers.length === 0) {
     return new Response(
       JSON.stringify({
-        plan: { name: "free", lookups_limit: limit, period: "daily" },
+        plan: { name: "starter", lookups_limit: limit, period: "monthly" },
         usage: {
-          total_lookups_today: 0,
+          total_lookups_this_month: 0,
           lookups_remaining: limit,
           by_key: [],
         },
@@ -73,24 +73,24 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
   const byKey = userConsumers.map((c: any) => ({
     consumer_id: c.name,
     description: c.description || "API Key",
-    lookups_today: usageData.by_consumer?.[c.name] || 0,
+    lookups_this_month: usageData.by_consumer?.[c.name] || 0,
     created_at: c.createdOn,
   }));
 
   const totalLookups = byKey.reduce(
-    (sum: number, k: any) => sum + k.lookups_today,
+    (sum: number, k: any) => sum + k.lookups_this_month,
     0,
   );
 
   return new Response(
     JSON.stringify({
       plan: {
-        name: "free",
+        name: "starter",
         lookups_limit: limit,
-        period: "daily",
+        period: "monthly",
       },
       usage: {
-        total_lookups_today: totalLookups,
+        total_lookups_this_month: totalLookups,
         lookups_remaining: Math.max(0, limit - totalLookups),
         by_key: byKey,
       },

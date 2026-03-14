@@ -1,4 +1,5 @@
 import type { ZudokuConfig } from "zudoku";
+import { PricingPage } from "./src/PricingPage.js";
 import { UsageDashboard } from "./src/UsageDashboard.js";
 
 /**
@@ -35,6 +36,13 @@ const config: ZudokuConfig = {
       element: <UsageDashboard />,
       display: "auth",
       icon: "bar-chart",
+    },
+    {
+      type: "custom-page",
+      path: "/pricing",
+      label: "Plans & Pricing",
+      element: <PricingPage />,
+      icon: "tag",
     },
     {
       type: "link",

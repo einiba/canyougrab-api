@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth, useZudoku } from "zudoku/hooks";
 import { Button } from "zudoku/components";
+import { PricingPlans } from "./PricingPlans";
 
 interface PlanInfo {
   name: string;
@@ -11,14 +12,14 @@ interface PlanInfo {
 interface KeyUsage {
   consumer_id: string;
   description: string;
-  lookups_today: number;
+  lookups_this_month: number;
   created_at: string;
 }
 
 interface UsageData {
   plan: PlanInfo;
   usage: {
-    total_lookups_today: number;
+    total_lookups_this_month: number;
     lookups_remaining: number;
     by_key: KeyUsage[];
   };
@@ -127,7 +128,7 @@ export function UsageDashboard() {
   const { plan, usage } = data;
   const pct =
     plan.lookups_limit > 0
-      ? Math.round((usage.total_lookups_today / plan.lookups_limit) * 100)
+      ? Math.round((usage.total_lookups_this_month / plan.lookups_limit) * 100)
       : 0;
 
   return (
@@ -151,47 +152,28 @@ export function UsageDashboard() {
             </p>
           </div>
           <span className="text-sm text-muted-foreground">
-            Resets {plan.period}
+            Resets monthly
           </span>
         </div>
 
         <div className="mb-2">
           <div className="flex justify-between text-sm mb-1">
             <span>
-              {usage.total_lookups_today.toLocaleString()} /{" "}
+              {usage.total_lookups_this_month.toLocaleString()} /{" "}
               {plan.lookups_limit.toLocaleString()} domain lookups used
             </span>
             <span className="text-muted-foreground">{pct}%</span>
           </div>
           <ProgressBar
-            value={usage.total_lookups_today}
+            value={usage.total_lookups_this_month}
             max={plan.lookups_limit}
           />
         </div>
 
         <p className="text-sm text-muted-foreground mt-2">
-          {usage.lookups_remaining.toLocaleString()} lookups remaining today
+          {usage.lookups_remaining.toLocaleString()} lookups remaining this
+          month
         </p>
-
-        <div className="flex gap-3 mt-5">
-          <Button
-            onClick={() =>
-              window.open("mailto:support@canyougrab.it?subject=Upgrade Plan")
-            }
-          >
-            Upgrade Plan
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() =>
-              window.open(
-                "mailto:support@canyougrab.it?subject=Cancel Subscription",
-              )
-            }
-          >
-            Cancel Subscription
-          </Button>
-        </div>
       </div>
 
       {/* Per-key breakdown */}
@@ -221,14 +203,20 @@ export function UsageDashboard() {
               </div>
               <div className="text-right ml-4 shrink-0">
                 <p className="font-semibold tabular-nums">
-                  {key.lookups_today.toLocaleString()}
+                  {key.lookups_this_month.toLocaleString()}
                 </p>
-                <p className="text-xs text-muted-foreground">lookups today</p>
+                <p className="text-xs text-muted-foreground">
+                  lookups this month
+                </p>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Plan options */}
+      <h2 className="font-medium text-lg mb-3 mt-8">Plans</h2>
+      <PricingPlans currentPlan={plan.name} />
     </div>
   );
 }
