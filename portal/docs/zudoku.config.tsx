@@ -121,7 +121,7 @@ const config: ZudokuConfig = {
   plugins: [overrideCssPlugin],
   apiKeys: {
     enabled: true,
-    getConsumers: async ({ context, auth }: any) => {
+    getConsumers: async (context: any) => {
       const req = new Request(`${API_BASE}/api/keys`);
       const signed = await context.signRequest(req);
       const res = await fetch(signed);
@@ -129,12 +129,17 @@ const config: ZudokuConfig = {
       const keys = await res.json();
       return keys.filter((k: any) => k.active).map((k: any) => ({
         id: k.id,
-        description: k.description || "API Key",
+        label: k.description || "API Key",
+        description: k.description,
         createdOn: k.created_at,
-        apiKey: k.key_prefix + "...",
+        apiKeys: [{
+          id: k.id,
+          key: k.key_prefix + "...",
+          createdOn: k.created_at,
+        }],
       }));
     },
-    createKey: async ({ apiKey, context, auth }: any) => {
+    createKey: async ({ apiKey, context }: any) => {
       const req = new Request(`${API_BASE}/api/keys`, {
         method: "POST",
         body: JSON.stringify({ description: apiKey.description || "API Key" }),
@@ -142,20 +147,16 @@ const config: ZudokuConfig = {
       });
       const res = await fetch(await context.signRequest(req));
       if (!res.ok) throw new Error("Could not create API Key");
-      return true;
     },
-    rollKey: async ({ id, context }: any) => {
-      const req = new Request(`${API_BASE}/api/keys/${id}/rotate`, { method: "POST" });
+    rollKey: async (consumerId: string, context: any) => {
+      const req = new Request(`${API_BASE}/api/keys/${consumerId}/rotate`, { method: "POST" });
       const res = await fetch(await context.signRequest(req));
       if (!res.ok) throw new Error("Could not rotate API Key");
-      const data = await res.json();
-      return data.key;
     },
-    deleteConsumer: async ({ id, context }: any) => {
-      const req = new Request(`${API_BASE}/api/keys/${id}`, { method: "DELETE" });
+    deleteKey: async (consumerId: string, _keyId: string, context: any) => {
+      const req = new Request(`${API_BASE}/api/keys/${consumerId}`, { method: "DELETE" });
       const res = await fetch(await context.signRequest(req));
       if (!res.ok) throw new Error("Could not revoke API Key");
-      return true;
     },
   },
 };
