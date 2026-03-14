@@ -88,6 +88,7 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
 
   // Get usage from backend for all consumer IDs
   const consumerNames = userConsumers.map((c: any) => c.name);
+  // Fetch monthly usage (backend now returns full month, not just today)
   const usageRes = await fetch(
     `${environment.BASE_URL}/api/account/usage/detailed`,
     {
@@ -103,11 +104,17 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
     consumer_id: c.name,
     description: c.description || "API Key",
     lookups_this_month: usageData.by_consumer?.[c.name] || 0,
+    lookups_this_hour: usageData.hourly_by_consumer?.[c.name] || 0,
     created_at: c.createdOn,
   }));
 
   const totalLookups = byKey.reduce(
     (sum: number, k: any) => sum + k.lookups_this_month,
+    0,
+  );
+
+  const totalHourlyLookups = byKey.reduce(
+    (sum: number, k: any) => sum + k.lookups_this_hour,
     0,
   );
 
@@ -121,6 +128,7 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
       has_subscription: hasSubscription,
       usage: {
         total_lookups_this_month: totalLookups,
+        total_lookups_this_hour: totalHourlyLookups,
         lookups_remaining: Math.max(0, limit - totalLookups),
         by_key: byKey,
       },

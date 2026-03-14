@@ -21,6 +21,7 @@ interface UsageData {
   has_subscription: boolean;
   usage: {
     total_lookups_this_month: number;
+    total_lookups_this_hour: number;
     lookups_remaining: number;
     by_key: KeyUsage[];
   };
@@ -80,11 +81,20 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function HourlyQuotaBar({ planName }: { planName: string }) {
+function HourlyQuotaBar({
+  planName,
+  hourlyUsage,
+}: {
+  planName: string;
+  hourlyUsage: number;
+}) {
   const countdown = useCountdownToNextHour();
   const limit = PLAN_RATE_LIMITS[planName.toLowerCase()] ?? 0;
 
   if (limit === 0) return null;
+
+  const displayUsed = Math.min(hourlyUsage, limit);
+  const hourlyPct = Math.min(100, Math.round((hourlyUsage / limit) * 100));
 
   return (
     <div className="mt-4 pt-4 border-t">
@@ -94,9 +104,18 @@ function HourlyQuotaBar({ planName }: { planName: string }) {
           Resets in {countdown}
         </span>
       </div>
-      <p className="text-sm text-muted-foreground">
-        {limit.toLocaleString()} requests per hour
-      </p>
+
+      <div className="mb-2">
+        <div className="flex justify-between text-sm mb-1">
+          <span>
+            {displayUsed.toLocaleString()} /{" "}
+            {limit.toLocaleString()} lookups this hour
+          </span>
+          <span className="text-muted-foreground">{hourlyPct}%</span>
+        </div>
+        <ProgressBar value={displayUsed} max={limit} />
+      </div>
+
       <p className="text-xs text-muted-foreground mt-1">
         Rate limits reset at the top of each UTC hour for all users.
         If you exceed your limit, API responses will include a{" "}
@@ -201,9 +220,12 @@ export function UsageDashboard() {
   if (!data) return null;
 
   const { plan, usage, has_subscription: hasSub } = data;
+  const isOverLimit = usage.total_lookups_this_month > plan.lookups_limit;
+  const displayUsed = isOverLimit ? plan.lookups_limit : usage.total_lookups_this_month;
+  const displayRemaining = isOverLimit ? 0 : usage.lookups_remaining;
   const pct =
     plan.lookups_limit > 0
-      ? Math.round((usage.total_lookups_this_month / plan.lookups_limit) * 100)
+      ? Math.min(100, Math.round((usage.total_lookups_this_month / plan.lookups_limit) * 100))
       : 0;
 
   return (
@@ -257,23 +279,23 @@ export function UsageDashboard() {
         <div className="mb-2">
           <div className="flex justify-between text-sm mb-1">
             <span>
-              {usage.total_lookups_this_month.toLocaleString()} /{" "}
+              {displayUsed.toLocaleString()} /{" "}
               {plan.lookups_limit.toLocaleString()} domain lookups used
             </span>
             <span className="text-muted-foreground">{pct}%</span>
           </div>
           <ProgressBar
-            value={usage.total_lookups_this_month}
+            value={displayUsed}
             max={plan.lookups_limit}
           />
         </div>
 
         <p className="text-sm text-muted-foreground mt-2">
-          {usage.lookups_remaining.toLocaleString()} lookups remaining this
+          {displayRemaining.toLocaleString()} lookups remaining this
           month
         </p>
 
-        <HourlyQuotaBar planName={plan.name} />
+        <HourlyQuotaBar planName={plan.name} hourlyUsage={usage.total_lookups_this_hour ?? 0} />
       </div>
 
       {/* Per-key breakdown */}

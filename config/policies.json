@@ -23,6 +23,15 @@
     },
     {
       "handler": {
+        "export": "default",
+        "module": "$import(./modules/monthly-quota-check)",
+        "options": {}
+      },
+      "name": "monthly-quota-check",
+      "policyType": "custom-code-inbound"
+    },
+    {
+      "handler": {
         "export": "RateLimitInboundPolicy",
         "module": "$import(@zuplo/runtime)",
         "options": {

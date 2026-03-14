@@ -25,6 +25,7 @@
             "inbound": [
               "api-key-inbound",
               "forward-consumer-header",
+              "monthly-quota-check",
               "plan-rate-limit"
             ]
           }
