@@ -49,19 +49,6 @@
     },
     {
       "handler": {
-        "export": "RateLimitInboundPolicy",
-        "module": "$import(@zuplo/runtime)",
-        "options": {
-          "rateLimitBy": "user",
-          "requestsAllowed": 30,
-          "timeWindowMinutes": 1
-        }
-      },
-      "name": "rate-limit-inbound-2",
-      "policyType": "rate-limit-inbound"
-    },
-    {
-      "handler": {
         "export": "OpenIdJwtInboundPolicy",
         "module": "$import(@zuplo/runtime)",
         "options": {
