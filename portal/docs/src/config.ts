@@ -1,1 +1,1 @@
-export const API_BASE = "https://dev-api.canyougrab.it";
+export const API_BASE = "https://api.canyougrab.it";
