@@ -103,6 +103,11 @@ const config: ZudokuConfig = {
     { from: "/", to: "/usage" },
     { from: "/docs", to: "/docs/~endpoints#bulk-domain-availability-check" },
   ],
+  defaults: {
+    apis: {
+      showInfoPage: false,
+    },
+  },
   apis: [
     {
       type: "file",
