@@ -1,10 +1,10 @@
 import { Button } from "zudoku/components";
 
 const PLANS = [
-  { name: "Starter", price: 1, lookups: 100, per100: "1.00" },
-  { name: "Basic", price: 10, lookups: 10_000, per100: "0.10" },
-  { name: "Pro", price: 20, lookups: 50_000, per100: "0.04" },
-  { name: "Business", price: 30, lookups: 300_000, per100: "0.01" },
+  { name: "Starter", price: 1, lookups: 100, per100: "1.00", rateLimit: 100 },
+  { name: "Basic", price: 10, lookups: 10_000, per100: "0.10", rateLimit: 1_000 },
+  { name: "Pro", price: 20, lookups: 50_000, per100: "0.04", rateLimit: 5_000 },
+  { name: "Business", price: 30, lookups: 300_000, per100: "0.01", rateLimit: 30_000 },
 ];
 
 interface PricingPlansProps {
@@ -40,12 +40,15 @@ export function PricingPlans({
             </p>
 
             <p className="text-3xl font-bold mt-3">${plan.price}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              ${plan.per100} per 100 lookups
-            </p>
 
             <p className="text-sm mt-4">
-              {plan.lookups.toLocaleString()} lookups / mo
+              ${plan.per100} per 100 lookups
+            </p>
+            <p className="text-sm mt-2">
+              {plan.rateLimit.toLocaleString()} requests / hour
+            </p>
+            <p className="text-sm mt-2">
+              {plan.lookups.toLocaleString()} lookups / month
             </p>
 
             <div className="mt-auto pt-5 w-full">

@@ -48,6 +48,10 @@ async function updateConsumerPlan(
             plan: planName,
             lookups_limit: String(lookupsLimit),
           },
+          metadata: {
+            ...consumer.metadata,
+            plan: planName,
+          },
         }),
       },
     );

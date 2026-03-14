@@ -26,25 +26,16 @@
         "export": "RateLimitInboundPolicy",
         "module": "$import(@zuplo/runtime)",
         "options": {
-          "rateLimitBy": "user",
-          "requestsAllowed": 60,
-          "timeWindowMinutes": 1
+          "rateLimitBy": "function",
+          "requestsAllowed": 100,
+          "timeWindowMinutes": 60,
+          "identifier": {
+            "export": "rateLimitByPlan",
+            "module": "$import(./modules/plan-rate-limit)"
+          }
         }
       },
-      "name": "rate-limit-inbound",
-      "policyType": "rate-limit-inbound"
-    },
-    {
-      "handler": {
-        "export": "RateLimitInboundPolicy",
-        "module": "$import(@zuplo/runtime)",
-        "options": {
-          "rateLimitBy": "user",
-          "requestsAllowed": 10,
-          "timeWindowMinutes": 1
-        }
-      },
-      "name": "rate-limit-inbound-1",
+      "name": "plan-rate-limit",
       "policyType": "rate-limit-inbound"
     },
     {

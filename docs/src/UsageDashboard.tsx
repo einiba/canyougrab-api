@@ -35,6 +35,32 @@ function getServerUrl(): string {
   );
 }
 
+const PLAN_RATE_LIMITS: Record<string, number> = {
+  starter: 100,
+  basic: 1_000,
+  pro: 5_000,
+  business: 30_000,
+};
+
+function useCountdownToNextHour() {
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    const now = new Date();
+    return 3600 - now.getUTCMinutes() * 60 - now.getUTCSeconds();
+  });
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date();
+      setSecondsLeft(3600 - now.getUTCMinutes() * 60 - now.getUTCSeconds());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const minutes = Math.floor(secondsLeft / 60);
+  const seconds = secondsLeft % 60;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 function ProgressBar({ value, max }: { value: number; max: number }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   const color =
@@ -50,6 +76,33 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
         className={`h-full rounded-full transition-all duration-500 ${color}`}
         style={{ width: `${pct}%` }}
       />
+    </div>
+  );
+}
+
+function HourlyQuotaBar({ planName }: { planName: string }) {
+  const countdown = useCountdownToNextHour();
+  const limit = PLAN_RATE_LIMITS[planName.toLowerCase()] ?? 0;
+
+  if (limit === 0) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t">
+      <div className="flex justify-between items-start mb-2">
+        <p className="text-sm font-medium">Hourly Rate Limit</p>
+        <span className="text-sm text-muted-foreground">
+          Resets in {countdown}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {limit.toLocaleString()} requests per hour
+      </p>
+      <p className="text-xs text-muted-foreground mt-1">
+        Rate limits reset at the top of each UTC hour for all users.
+        If you exceed your limit, API responses will include a{" "}
+        <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">429</code>{" "}
+        status code.
+      </p>
     </div>
   );
 }
@@ -219,6 +272,8 @@ export function UsageDashboard() {
           {usage.lookups_remaining.toLocaleString()} lookups remaining this
           month
         </p>
+
+        <HourlyQuotaBar planName={plan.name} />
       </div>
 
       {/* Per-key breakdown */}

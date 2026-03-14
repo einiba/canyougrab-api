@@ -5,33 +5,6 @@
     "title": "CanYouGrab API"
   },
   "paths": {
-    "/v1/domains/{domain}/availability": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
-      "get": {
-        "summary": "Check Domain Availability",
-        "description": "Checks whether a given domain name is available for registration based on ICANN CZDS zone file data.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/api/check/${params.domain}"
-            }
-          },
-          "policies": {
-            "inbound": [
-              "api-key-inbound",
-              "forward-consumer-header",
-              "rate-limit-inbound"
-            ]
-          }
-        },
-        "operationId": "new-route-8f9d13cd"
-      }
-    },
     "/v1/domains/availability/bulk": {
       "x-zuplo-path": {
         "pathMode": "open-api"
@@ -52,7 +25,7 @@
             "inbound": [
               "api-key-inbound",
               "forward-consumer-header",
-              "rate-limit-inbound-1"
+              "plan-rate-limit"
             ]
           }
         },
