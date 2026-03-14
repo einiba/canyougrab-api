@@ -4,6 +4,11 @@
     "version": "1.0.0",
     "title": "CanYouGrab API"
   },
+  "servers": [
+    {
+      "url": "https://gateway.canyougrab.it"
+    }
+  ],
   "paths": {
     "/v1/domains/availability/bulk": {
       "x-zuplo-path": {
