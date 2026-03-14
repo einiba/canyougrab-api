@@ -1,0 +1,17 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches: [dev]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to dev.canyougrab.it
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEV_DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: /opt/deploy.sh dev

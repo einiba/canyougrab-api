@@ -1,6 +1,7 @@
 import type { ZudokuConfig, ZudokuPlugin } from "zudoku";
 import { PricingPage } from "./src/PricingPage.js";
 import { UsageDashboard } from "./src/UsageDashboard.js";
+import { API_BASE } from "./src/config.js";
 
 const overrideCssPlugin: ZudokuPlugin = {
   getHead: () => <link rel="stylesheet" href="/overrides.css" />,
@@ -121,7 +122,7 @@ const config: ZudokuConfig = {
   apiKeys: {
     enabled: true,
     getConsumers: async ({ context, auth }: any) => {
-      const req = new Request("https://api.canyougrab.it/api/keys");
+      const req = new Request(`${API_BASE}/api/keys`);
       const signed = await context.signRequest(req);
       const res = await fetch(signed);
       if (!res.ok) return [];
@@ -134,7 +135,7 @@ const config: ZudokuConfig = {
       }));
     },
     createKey: async ({ apiKey, context, auth }: any) => {
-      const req = new Request("https://api.canyougrab.it/api/keys", {
+      const req = new Request(`${API_BASE}/api/keys`, {
         method: "POST",
         body: JSON.stringify({ description: apiKey.description || "API Key" }),
         headers: { "Content-Type": "application/json" },
@@ -144,14 +145,14 @@ const config: ZudokuConfig = {
       return true;
     },
     rollKey: async ({ id, context }: any) => {
-      const req = new Request(`https://api.canyougrab.it/api/keys/${id}/rotate`, { method: "POST" });
+      const req = new Request(`${API_BASE}/api/keys/${id}/rotate`, { method: "POST" });
       const res = await fetch(await context.signRequest(req));
       if (!res.ok) throw new Error("Could not rotate API Key");
       const data = await res.json();
       return data.key;
     },
     deleteConsumer: async ({ id, context }: any) => {
-      const req = new Request(`https://api.canyougrab.it/api/keys/${id}`, { method: "DELETE" });
+      const req = new Request(`${API_BASE}/api/keys/${id}`, { method: "DELETE" });
       const res = await fetch(await context.signRequest(req));
       if (!res.ok) throw new Error("Could not revoke API Key");
       return true;

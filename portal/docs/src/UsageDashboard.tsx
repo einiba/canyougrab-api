@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth, useZudoku } from "zudoku/hooks";
 import { Button } from "zudoku/components";
+import { API_BASE } from "./config.js";
 
 interface PlanInfo {
   name: string;
@@ -25,8 +26,6 @@ interface UsageData {
     by_key: KeyUsage[];
   };
 }
-
-const API_BASE = "https://api.canyougrab.it";
 
 const PLAN_RATE_LIMITS: Record<string, number> = {
   starter: 100,

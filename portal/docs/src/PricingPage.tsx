@@ -2,8 +2,7 @@ import { useAuth, useZudoku } from "zudoku/hooks";
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "zudoku/components";
 import { PricingPlans } from "./PricingPlans";
-
-const API_BASE = "https://api.canyougrab.it";
+import { API_BASE } from "./config.js";
 
 export function PricingPage() {
   const auth = useAuth();
