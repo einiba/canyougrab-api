@@ -1,10 +1,7 @@
-.zuplo/
-.cache/
-dist/
 node_modules/
+dist/
 .env
-.env.zuplo
-
-# OS Stuff
-
-.DS_Store
+*.pem
+__pycache__/
+*.pyc
+.claude/
