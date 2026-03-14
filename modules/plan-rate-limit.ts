@@ -17,8 +17,14 @@ export function rateLimitByPlan(
     (request.user as any)?.data?.plan?.toLowerCase() ?? "";
   const limit = PLAN_RATE_LIMITS[plan] ?? DEFAULT_RATE_LIMIT;
 
+  const key = request.user?.sub ?? request.headers.get("x-forwarded-for") ?? "anonymous";
+
+  context.log.info(
+    `[rate-limit] user=${request.user?.sub}, plan="${plan}", limit=${limit}, key="${key}"`
+  );
+
   return {
-    key: request.user?.sub ?? request.headers.get("x-forwarded-for") ?? "anonymous",
+    key,
     requestsAllowed: limit,
     timeWindowMinutes: 60,
   };
