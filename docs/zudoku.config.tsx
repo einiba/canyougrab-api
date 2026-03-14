@@ -95,19 +95,19 @@ const config: ZudokuConfig = {
     },
     {
       type: "link",
-      to: "/api",
+      to: "/docs",
       label: "API Reference",
     },
   ],
   redirects: [
     { from: "/", to: "/usage" },
-    { from: "/api", to: "/api/~endpoints#bulk-domain-availability-check" },
+    { from: "/docs", to: "/docs/~endpoints#bulk-domain-availability-check" },
   ],
   apis: [
     {
       type: "file",
       input: "../config/routes.oas.json",
-      path: "api",
+      path: "docs",
     },
   ],
   authentication: {
