@@ -26,14 +26,7 @@ interface UsageData {
   };
 }
 
-function getServerUrl(): string {
-  return (
-    (typeof process !== "undefined" &&
-      (process.env as any)?.ZUPLO_PUBLIC_SERVER_URL) ||
-    (import.meta as any).env?.ZUPLO_SERVER_URL ||
-    ""
-  );
-}
+const API_BASE = "https://api.canyougrab.it";
 
 const PLAN_RATE_LIMITS: Record<string, number> = {
   starter: 100,
@@ -137,8 +130,8 @@ export function UsageDashboard() {
     try {
       setLoading(true);
       setError(null);
-      const serverUrl = getServerUrl();
-      const req = new Request(serverUrl + "/v1/account/usage/detailed");
+      const serverUrl = API_BASE;
+      const req = new Request(serverUrl + "/api/billing/usage/detailed");
       const signed = await signRequest(req);
       const res = await fetch(signed);
       if (!res.ok) {
@@ -162,8 +155,8 @@ export function UsageDashboard() {
   const handleManageBilling = useCallback(async () => {
     setBillingLoading(true);
     try {
-      const serverUrl = getServerUrl();
-      const req = new Request(serverUrl + "/v1/billing/portal", {
+      const serverUrl = API_BASE;
+      const req = new Request(serverUrl + "/api/billing/portal", {
         method: "POST",
       });
       const signed = await signRequest(req);

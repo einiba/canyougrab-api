@@ -1,142 +1,118 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "version": "1.0.0",
+    "version": "4.0.0",
     "title": "CanYouGrab API"
   },
   "servers": [
     {
-      "url": "https://gateway.canyougrab.it"
+      "url": "https://api.canyougrab.it"
     }
   ],
   "paths": {
-    "/v1/domains/availability/bulk": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
+    "/api/check/bulk": {
       "post": {
         "summary": "Bulk Domain Availability Check",
-        "description": "Check availability of multiple domain names in a single request. Maximum 500 domains per request.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/api/check/bulk"
+        "description": "Check availability of multiple domain names in a single request. Maximum 100 domains per request. Returns results synchronously.",
+        "operationId": "bulk-domain-check",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["domains"],
+                "properties": {
+                  "domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 100,
+                    "description": "Array of domain names to check (max 100)",
+                    "example": ["example.com", "startup.io", "myapp.dev"]
+                  }
+                }
+              }
             }
-          },
-          "policies": {
-            "inbound": [
-              "api-key-inbound",
-              "forward-consumer-header",
-              "monthly-quota-check",
-              "plan-rate-limit"
-            ]
           }
         },
-        "operationId": "new-route-5bccc068"
+        "responses": {
+          "200": {
+            "description": "Domain availability results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "domain": { "type": "string" },
+                          "available": { "type": "boolean" },
+                          "tld": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "results": [
+                    { "domain": "example.com", "available": false, "tld": "com" },
+                    { "domain": "startup.io", "available": true }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid request (empty array or exceeds 100 domains)" },
+          "401": { "description": "Missing or invalid API key" },
+          "429": { "description": "Rate limit or quota exceeded" }
+        },
+        "security": [{ "apiKey": [] }]
       }
     },
-    "/v1/tlds": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
+    "/api/tlds": {
       "get": {
         "summary": "List Supported TLDs",
         "description": "Returns all 800+ top-level domains supported by the API, with record counts and last-updated timestamps.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/api/tlds"
-            }
-          },
-          "policies": {
-            "inbound": [
-              "api-key-inbound",
-              "forward-consumer-header"
-            ]
-          }
+        "operationId": "list-tlds",
+        "responses": {
+          "200": { "description": "Array of supported TLDs with metadata" },
+          "401": { "description": "Missing or invalid API key" }
         },
-        "operationId": "new-route-96382847"
+        "security": [{ "apiKey": [] }]
       }
     },
-    "/v1/account/usage": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
+    "/api/account/usage": {
       "get": {
         "summary": "Get Usage Summary",
         "description": "Returns the current billing period usage summary for the authenticated API consumer, including lookups used and remaining quota.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/api/account/usage"
-            }
-          },
-          "policies": {
-            "inbound": [
-              "api-key-inbound",
-              "forward-consumer-header"
-            ]
-          }
+        "operationId": "get-usage",
+        "responses": {
+          "200": { "description": "Usage summary for the authenticated consumer" },
+          "401": { "description": "Missing or invalid API key" }
         },
-        "operationId": "new-route-19a1a4e1"
+        "security": [{ "apiKey": [] }]
       }
     },
-    "/v1/jobs/{job_id}": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
-      "get": {
-        "summary": "Get Job Status",
-        "description": "Check the status of an async bulk domain availability check job. Returns results when all chunks are complete. Poll this endpoint until status is 'completed'.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/api/jobs/${params.job_id}"
-            }
-          },
-          "policies": {
-            "inbound": [
-              "api-key-inbound",
-              "forward-consumer-header"
-            ]
-          }
-        },
-        "operationId": "get-job-status"
-      }
-    },
-    "/v1/health": {
-      "x-zuplo-path": {
-        "pathMode": "open-api"
-      },
+    "/health": {
       "get": {
         "summary": "Health Check",
         "description": "Returns API health status. No authentication required.",
-        "x-zuplo-route": {
-          "corsPolicy": "none",
-          "handler": {
-            "export": "urlRewriteHandler",
-            "module": "$import(@zuplo/runtime)",
-            "options": {
-              "rewritePattern": "${env.BASE_URL}/health"
-            }
-          },
-          "policies": {
-            "inbound": []
-          }
-        },
-        "operationId": "new-route-a03a27d1"
+        "operationId": "health-check",
+        "responses": {
+          "200": { "description": "API is healthy" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key passed as Bearer token in the Authorization header"
       }
     }
   }

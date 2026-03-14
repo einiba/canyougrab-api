@@ -4,9 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "zuplo dev",
-    "test": "zuplo test",
-    "docs": "zuplo docs"
+    "dev": "npm -w docs run dev",
+    "build": "npm -w docs run build"
   },
   "dependencies": {
     "zuplo": "^6"

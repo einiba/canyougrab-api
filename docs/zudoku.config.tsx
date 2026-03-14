@@ -6,11 +6,7 @@ const overrideCssPlugin: ZudokuPlugin = {
   getHead: () => <link rel="stylesheet" href="/overrides.css" />,
 };
 
-/**
- * Developer Portal Configuration
- * For more information, see:
- * https://zuplo.com/docs/dev-portal/zudoku/configuration/overview
- */
+/** Developer Portal Configuration */
 const config: ZudokuConfig = {
   site: {
     title: "CanYouGrab API",
@@ -124,37 +120,40 @@ const config: ZudokuConfig = {
   plugins: [overrideCssPlugin],
   apiKeys: {
     enabled: true,
+    getConsumers: async ({ context, auth }: any) => {
+      const req = new Request("https://api.canyougrab.it/api/keys");
+      const signed = await context.signRequest(req);
+      const res = await fetch(signed);
+      if (!res.ok) return [];
+      const keys = await res.json();
+      return keys.filter((k: any) => k.active).map((k: any) => ({
+        id: k.id,
+        description: k.description || "API Key",
+        createdOn: k.created_at,
+        apiKey: k.key_prefix + "...",
+      }));
+    },
     createKey: async ({ apiKey, context, auth }: any) => {
-      const serverUrl =
-        (typeof process !== "undefined" &&
-          process.env?.ZUPLO_PUBLIC_SERVER_URL) ||
-        (import.meta as any).env?.ZUPLO_SERVER_URL;
-      const createApiKeyRequest = new Request(
-        serverUrl + "/v1/developer/api-key",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            ...apiKey,
-            email: auth.profile?.email,
-            metadata: {
-              userId: auth.profile?.sub,
-              name: auth.profile?.name,
-            },
-          }),
-          headers: {
-            "Content-Type": "application/json",
-          },
-        },
-      );
-
-      const response = await fetch(
-        await context.signRequest(createApiKeyRequest),
-      );
-
-      if (!response.ok) {
-        throw new Error("Could not create API Key");
-      }
-
+      const req = new Request("https://api.canyougrab.it/api/keys", {
+        method: "POST",
+        body: JSON.stringify({ description: apiKey.description || "API Key" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await fetch(await context.signRequest(req));
+      if (!res.ok) throw new Error("Could not create API Key");
+      return true;
+    },
+    rollKey: async ({ id, context }: any) => {
+      const req = new Request(`https://api.canyougrab.it/api/keys/${id}/rotate`, { method: "POST" });
+      const res = await fetch(await context.signRequest(req));
+      if (!res.ok) throw new Error("Could not rotate API Key");
+      const data = await res.json();
+      return data.key;
+    },
+    deleteConsumer: async ({ id, context }: any) => {
+      const req = new Request(`https://api.canyougrab.it/api/keys/${id}`, { method: "DELETE" });
+      const res = await fetch(await context.signRequest(req));
+      if (!res.ok) throw new Error("Could not revoke API Key");
       return true;
     },
   },

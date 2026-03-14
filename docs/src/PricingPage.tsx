@@ -3,14 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "zudoku/components";
 import { PricingPlans } from "./PricingPlans";
 
-function getServerUrl(): string {
-  return (
-    (typeof process !== "undefined" &&
-      (process.env as any)?.ZUPLO_PUBLIC_SERVER_URL) ||
-    (import.meta as any).env?.ZUPLO_SERVER_URL ||
-    ""
-  );
-}
+const API_BASE = "https://api.canyougrab.it";
 
 export function PricingPage() {
   const auth = useAuth();
@@ -36,8 +29,7 @@ export function PricingPage() {
 
   const fetchPlan = useCallback(async () => {
     try {
-      const serverUrl = getServerUrl();
-      const req = new Request(serverUrl + "/v1/account/usage/detailed");
+      const req = new Request(API_BASE + "/api/billing/usage/detailed");
       const signed = await signRequest(req);
       const res = await fetch(signed);
       if (res.ok) {
@@ -65,8 +57,7 @@ export function PricingPage() {
 
       setLoadingPlan(plan);
       try {
-        const serverUrl = getServerUrl();
-        const req = new Request(serverUrl + "/v1/billing/checkout", {
+        const req = new Request(API_BASE + "/api/billing/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ plan }),
@@ -90,8 +81,7 @@ export function PricingPage() {
   const handleCancelSubscription = useCallback(async () => {
     setCancelLoading(true);
     try {
-      const serverUrl = getServerUrl();
-      const req = new Request(serverUrl + "/v1/billing/portal", {
+      const req = new Request(API_BASE + "/api/billing/portal", {
         method: "POST",
       });
       const signed = await signRequest(req);
