@@ -18,6 +18,7 @@ interface KeyUsage {
 
 interface UsageData {
   plan: PlanInfo;
+  has_subscription: boolean;
   usage: {
     total_lookups_this_month: number;
     lookups_remaining: number;
@@ -59,6 +60,7 @@ export function UsageDashboard() {
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
 
   const fetchUsage = useCallback(async () => {
     try {
@@ -85,6 +87,26 @@ export function UsageDashboard() {
       fetchUsage();
     }
   }, [auth.isAuthenticated, fetchUsage]);
+
+  const handleManageBilling = useCallback(async () => {
+    setBillingLoading(true);
+    try {
+      const serverUrl = getServerUrl();
+      const req = new Request(serverUrl + "/v1/billing/portal", {
+        method: "POST",
+      });
+      const signed = await signRequest(req);
+      const res = await fetch(signed);
+      const json = await res.json();
+      if (json.url) {
+        window.location.href = json.url;
+      }
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setBillingLoading(false);
+    }
+  }, [signRequest]);
 
   if (!auth.isAuthenticated) {
     return (
@@ -125,7 +147,7 @@ export function UsageDashboard() {
 
   if (!data) return null;
 
-  const { plan, usage } = data;
+  const { plan, usage, has_subscription: hasSub } = data;
   const pct =
     plan.lookups_limit > 0
       ? Math.round((usage.total_lookups_this_month / plan.lookups_limit) * 100)
@@ -135,10 +157,33 @@ export function UsageDashboard() {
     <div className="max-w-3xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
       <div className="flex justify-between items-center pb-3">
         <h1 className="font-medium text-2xl">Usage & Billing</h1>
-        <Button onClick={fetchUsage} variant="outline">
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          {hasSub && (
+            <Button
+              onClick={handleManageBilling}
+              variant="outline"
+              disabled={billingLoading}
+            >
+              {billingLoading ? "Loading..." : "Manage Billing"}
+            </Button>
+          )}
+          <Button onClick={fetchUsage} variant="outline">
+            Refresh
+          </Button>
+        </div>
       </div>
+
+      {!hasSub && (
+        <div className="border border-yellow-300 dark:border-yellow-800 rounded-lg p-4 bg-yellow-50 dark:bg-yellow-950 mb-6">
+          <p className="text-yellow-700 dark:text-yellow-400">
+            No active subscription.{" "}
+            <a href="/pricing" className="underline font-medium">
+              Choose a plan
+            </a>{" "}
+            to start making API lookups.
+          </p>
+        </div>
+      )}
 
       {/* Plan overview card */}
       <div className="border rounded-lg p-6 mb-6">

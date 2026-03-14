@@ -7,12 +7,24 @@ const PLANS = [
   { name: "Business", price: 30, lookups: 300_000, per100: "0.01" },
 ];
 
-export function PricingPlans({ currentPlan }: { currentPlan?: string }) {
+interface PricingPlansProps {
+  currentPlan?: string;
+  onSelectPlan?: (plan: string) => void;
+  loadingPlan?: string | null;
+}
+
+export function PricingPlans({
+  currentPlan,
+  onSelectPlan,
+  loadingPlan,
+}: PricingPlansProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {PLANS.map((plan) => {
         const isCurrent =
           currentPlan?.toLowerCase() === plan.name.toLowerCase();
+        const isLoading =
+          loadingPlan?.toLowerCase() === plan.name.toLowerCase();
 
         return (
           <div
@@ -48,13 +60,10 @@ export function PricingPlans({ currentPlan }: { currentPlan?: string }) {
               ) : (
                 <Button
                   className="w-full"
-                  onClick={() =>
-                    window.open(
-                      `mailto:support@canyougrab.it?subject=Upgrade to ${plan.name} Plan`,
-                    )
-                  }
+                  disabled={isLoading || !!loadingPlan}
+                  onClick={() => onSelectPlan?.(plan.name.toLowerCase())}
                 >
-                  {currentPlan ? "Switch Plan" : "Get Started"}
+                  {isLoading ? "Redirecting..." : currentPlan ? "Switch Plan" : "Get Started"}
                 </Button>
               )}
             </div>

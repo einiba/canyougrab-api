@@ -1,4 +1,5 @@
 import { ZuploContext, ZuploRequest, environment } from "@zuplo/runtime";
+import { PLAN_LIMITS, findOrCreateCustomer, getActiveSubscription, PRICE_TO_PLAN_MAP } from "./stripe-helpers";
 
 const accountName = environment.ZP_ACCOUNT_NAME;
 const bucketName = environment.ZP_API_KEY_SERVICE_BUCKET_NAME;
@@ -41,15 +42,43 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
       c.managers?.some((m: any) => m.sub === sub),
   );
 
-  const limit = 100;
+  const email = (request.user as any)?.data?.email;
+
+  // Read plan from consumer tags (set by Stripe webhook)
+  const planName = userConsumers[0]?.tags?.plan || "none";
+  const limit = planName !== "none"
+    ? (PLAN_LIMITS[planName] ?? parseInt(userConsumers[0]?.tags?.lookups_limit || "0", 10))
+    : 0;
+  const hasSubscription = planName !== "none";
 
   if (userConsumers.length === 0) {
+    // No consumers — check Stripe for an active subscription as fallback
+    let fallbackPlan = "none";
+    let fallbackLimit = 0;
+    let fallbackHasSub = false;
+
+    try {
+      const customerId = await findOrCreateCustomer(sub, email);
+      const activeSub = await getActiveSubscription(customerId);
+      if (activeSub) {
+        const priceId = activeSub.items?.data?.[0]?.price?.id;
+        if (priceId && PRICE_TO_PLAN_MAP[priceId]) {
+          fallbackPlan = PRICE_TO_PLAN_MAP[priceId].name;
+          fallbackLimit = PRICE_TO_PLAN_MAP[priceId].limit;
+          fallbackHasSub = true;
+        }
+      }
+    } catch (err) {
+      context.log.warn(`Stripe fallback lookup failed: ${err}`);
+    }
+
     return new Response(
       JSON.stringify({
-        plan: { name: "starter", lookups_limit: limit, period: "monthly" },
+        plan: { name: fallbackPlan, lookups_limit: fallbackLimit, period: "monthly" },
+        has_subscription: fallbackHasSub,
         usage: {
           total_lookups_this_month: 0,
-          lookups_remaining: limit,
+          lookups_remaining: fallbackLimit,
           by_key: [],
         },
       }),
@@ -85,10 +114,11 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
   return new Response(
     JSON.stringify({
       plan: {
-        name: "starter",
+        name: planName,
         lookups_limit: limit,
         period: "monthly",
       },
+      has_subscription: hasSubscription,
       usage: {
         total_lookups_this_month: totalLookups,
         lookups_remaining: Math.max(0, limit - totalLookups),

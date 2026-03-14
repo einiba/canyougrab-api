@@ -2,18 +2,38 @@ import { useAuth, useZudoku } from "zudoku/hooks";
 import { useState, useEffect, useCallback } from "react";
 import { PricingPlans } from "./PricingPlans";
 
+function getServerUrl(): string {
+  return (
+    (typeof process !== "undefined" &&
+      (process.env as any)?.ZUPLO_PUBLIC_SERVER_URL) ||
+    (import.meta as any).env?.ZUPLO_SERVER_URL ||
+    ""
+  );
+}
+
 export function PricingPage() {
   const auth = useAuth();
   const { signRequest } = useZudoku();
   const [currentPlan, setCurrentPlan] = useState<string | undefined>(undefined);
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const [checkoutStatus, setCheckoutStatus] = useState<"success" | "cancel" | null>(null);
+
+  // Check for checkout result in URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("checkout");
+    if (status === "success" || status === "cancel") {
+      setCheckoutStatus(status);
+      // Clean up URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete("checkout");
+      window.history.replaceState({}, "", url.pathname);
+    }
+  }, []);
 
   const fetchPlan = useCallback(async () => {
     try {
-      const serverUrl =
-        (typeof process !== "undefined" &&
-          (process.env as any)?.ZUPLO_PUBLIC_SERVER_URL) ||
-        (import.meta as any).env?.ZUPLO_SERVER_URL ||
-        "";
+      const serverUrl = getServerUrl();
       const req = new Request(serverUrl + "/v1/account/usage/detailed");
       const signed = await signRequest(req);
       const res = await fetch(signed);
@@ -32,13 +52,65 @@ export function PricingPage() {
     }
   }, [auth.isAuthenticated, fetchPlan]);
 
+  const handleSelectPlan = useCallback(
+    async (plan: string) => {
+      if (!auth.isAuthenticated) {
+        auth.login();
+        return;
+      }
+
+      setLoadingPlan(plan);
+      try {
+        const serverUrl = getServerUrl();
+        const req = new Request(serverUrl + "/v1/billing/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan }),
+        });
+        const signed = await signRequest(req);
+        const res = await fetch(signed);
+        const json = await res.json();
+
+        if (json.url) {
+          window.location.href = json.url;
+        } else {
+          setLoadingPlan(null);
+        }
+      } catch {
+        setLoadingPlan(null);
+      }
+    },
+    [auth, signRequest],
+  );
+
   return (
     <div className="max-w-5xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
       <h1 className="font-medium text-2xl pb-2">Plans & Pricing</h1>
       <p className="text-muted-foreground mb-6">
         Choose the plan that fits your lookup volume.
       </p>
-      <PricingPlans currentPlan={currentPlan} />
+
+      {checkoutStatus === "success" && (
+        <div className="border border-emerald-300 dark:border-emerald-800 rounded-lg p-4 bg-emerald-50 dark:bg-emerald-950 mb-6">
+          <p className="text-emerald-700 dark:text-emerald-400">
+            Subscription activated! Your plan will be updated shortly.
+          </p>
+        </div>
+      )}
+
+      {checkoutStatus === "cancel" && (
+        <div className="border border-yellow-300 dark:border-yellow-800 rounded-lg p-4 bg-yellow-50 dark:bg-yellow-950 mb-6">
+          <p className="text-yellow-700 dark:text-yellow-400">
+            Checkout was cancelled. You can try again below.
+          </p>
+        </div>
+      )}
+
+      <PricingPlans
+        currentPlan={currentPlan}
+        onSelectPlan={handleSelectPlan}
+        loadingPlan={loadingPlan}
+      />
     </div>
   );
 }

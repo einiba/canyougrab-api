@@ -29,6 +29,60 @@
         "x-internal": true
       }
     },
+    "/v1/billing/checkout": {
+      "x-zuplo-path": { "pathMode": "open-api" },
+      "post": {
+        "summary": "Create Checkout Session",
+        "description": "Creates a Stripe Checkout session for subscribing to a plan.",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/stripe-checkout)",
+            "options": {}
+          },
+          "policies": { "inbound": ["open-id-jwt-auth-inbound"] }
+        },
+        "operationId": "create-checkout-session",
+        "x-internal": true
+      }
+    },
+    "/v1/billing/portal": {
+      "x-zuplo-path": { "pathMode": "open-api" },
+      "post": {
+        "summary": "Create Billing Portal Session",
+        "description": "Creates a Stripe Customer Portal session for managing subscriptions.",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/stripe-portal)",
+            "options": {}
+          },
+          "policies": { "inbound": ["open-id-jwt-auth-inbound"] }
+        },
+        "operationId": "create-portal-session",
+        "x-internal": true
+      }
+    },
+    "/v1/stripe/webhook": {
+      "x-zuplo-path": { "pathMode": "open-api" },
+      "post": {
+        "summary": "Stripe Webhook",
+        "description": "Handles Stripe webhook events for subscription lifecycle.",
+        "x-zuplo-route": {
+          "corsPolicy": "anything-goes",
+          "handler": {
+            "export": "default",
+            "module": "$import(./modules/stripe-webhook)",
+            "options": {}
+          },
+          "policies": { "inbound": [] }
+        },
+        "operationId": "stripe-webhook",
+        "x-internal": true
+      }
+    },
     "/v1/account/usage/detailed": {
       "x-zuplo-path": {
         "pathMode": "open-api"
