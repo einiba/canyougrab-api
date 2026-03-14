@@ -38,8 +38,8 @@ function encodeBody(
         flatten(v, p ? `${p}[${k}]` : k);
       }
     } else if (Array.isArray(o)) {
-      for (const v of o) {
-        params.append(`${p}[]`, String(v));
+      for (let i = 0; i < o.length; i++) {
+        flatten(o[i], `${p}[${i}]`);
       }
     } else {
       params.append(p, String(o));

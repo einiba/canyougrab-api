@@ -52,7 +52,7 @@ export default async function (request: ZuploRequest, context: ZuploContext) {
   if (session.error) {
     context.log.error(`Stripe checkout error: ${JSON.stringify(session.error)}`);
     return new Response(
-      JSON.stringify({ error: "Failed to create checkout session" }),
+      JSON.stringify({ error: "Failed to create checkout session", detail: session.error.message }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
