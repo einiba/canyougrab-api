@@ -1,0 +1,1 @@
+{"version":3,"file":"constants-B942wETt.js","sources":["../../../../node_modules/zudoku/src/lib/oas/graphql/constants.ts"],"sourcesContent":["export const CIRCULAR_REF = \"$[Circular Reference]\";\nexport const SCHEMA_REF_PREFIX = \"$ref:\";\n"],"names":["CIRCULAR_REF","SCHEMA_REF_PREFIX"],"mappings":"AAAO,MAAMA,EAAe,wBACfC,EAAoB","x_google_ignoreList":[0]}

@@ -1,0 +1,13 @@
+/* Hide theme toggle - dark only */
+button[aria-label="Switch to light mode"],
+button[aria-label="Switch to dark mode"] { display: none !important; }
+
+/* Show desktop nav at 640px instead of 1024px (Tailwind lg = 1024px) */
+@media (min-width: 640px) {
+  .lg\:hidden { display: none !important; }
+  .hidden.lg\:flex { display: flex !important; }
+  .hidden.lg\:block { display: block !important; }
+  header .lg\:grid-cols-\[1fr_auto_1fr\] { grid-template-columns: 1fr auto 1fr; display: grid; }
+  .lg\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+  .lg\:top-0 { top: 0; }
+}

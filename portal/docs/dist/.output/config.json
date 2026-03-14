@@ -1,0 +1,16 @@
+{
+  "version": 3,
+  "framework": {
+    "version": "0.71.2"
+  },
+  "routes": [
+    {
+      "src": "/docs",
+      "dest": "/docs/~endpoints#bulk-domain-availability-check",
+      "status": 301,
+      "headers": {
+        "Location": "/docs/~endpoints#bulk-domain-availability-check"
+      }
+    }
+  ]
+}

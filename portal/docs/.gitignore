@@ -13,8 +13,8 @@
 # testing
 /coverage
 
-# zudoku
-/dist/
+# zudoku (dist tracked for deploy — rebuild with `npm run build`)
+# /dist/
 
 # misc
 .DS_Store
