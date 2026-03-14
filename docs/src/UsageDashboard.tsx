@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth, useZudoku } from "zudoku/hooks";
 import { Button } from "zudoku/components";
-import { PricingPlans } from "./PricingPlans";
 
 interface PlanInfo {
   name: string;
@@ -72,7 +71,7 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
         : "bg-primary";
 
   return (
-    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+    <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
       <div
         className={`h-full rounded-full transition-all duration-500 ${color}`}
         style={{ width: `${pct}%` }}
@@ -119,7 +118,7 @@ function HourlyQuotaBar({
       <p className="text-xs text-muted-foreground mt-1">
         Rate limits reset at the top of each UTC hour for all users.
         If you exceed your limit, API responses will include a{" "}
-        <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">429</code>{" "}
+        <code className="text-xs bg-gray-800 px-1 rounded">429</code>{" "}
         status code.
       </p>
     </div>
@@ -196,8 +195,8 @@ export function UsageDashboard() {
       <div className="max-w-3xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
         <h1 className="font-medium text-2xl pb-3">Usage & Billing</h1>
         <div className="animate-pulse space-y-4">
-          <div className="h-40 bg-gray-200 dark:bg-gray-800 rounded-lg" />
-          <div className="h-32 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+          <div className="h-40 bg-gray-800 rounded-lg" />
+          <div className="h-32 bg-gray-800 rounded-lg" />
         </div>
       </div>
     );
@@ -207,8 +206,8 @@ export function UsageDashboard() {
     return (
       <div className="max-w-3xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
         <h1 className="font-medium text-2xl pb-3">Usage & Billing</h1>
-        <div className="border border-red-300 dark:border-red-800 rounded-lg p-4 bg-red-50 dark:bg-red-950">
-          <p className="text-red-700 dark:text-red-400">{error}</p>
+        <div className="border border-red-800 rounded-lg p-4 bg-red-950">
+          <p className="text-red-400">{error}</p>
           <Button onClick={fetchUsage} className="mt-3">
             Retry
           </Button>
@@ -249,8 +248,8 @@ export function UsageDashboard() {
       </div>
 
       {!hasSub && (
-        <div className="border border-yellow-300 dark:border-yellow-800 rounded-lg p-4 bg-yellow-50 dark:bg-yellow-950 mb-6">
-          <p className="text-yellow-700 dark:text-yellow-400">
+        <div className="border border-yellow-800 rounded-lg p-4 bg-yellow-950 mb-6">
+          <p className="text-yellow-400">
             No active subscription.{" "}
             <a href="/pricing" className="underline font-medium">
               Choose a plan
@@ -269,6 +268,9 @@ export function UsageDashboard() {
             </p>
             <p className="text-xl font-semibold capitalize mt-1">
               {plan.name}
+              <a href="/pricing" className="text-sm text-primary font-normal ml-3 hover:underline">
+                Change plan
+              </a>
             </p>
           </div>
           <span className="text-sm text-muted-foreground">
@@ -336,9 +338,6 @@ export function UsageDashboard() {
         </div>
       )}
 
-      {/* Plan options */}
-      <h2 className="font-medium text-lg mb-3 mt-8">Plans</h2>
-      <PricingPlans currentPlan={plan.name} />
     </div>
   );
 }

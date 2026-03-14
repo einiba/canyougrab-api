@@ -1,6 +1,10 @@
-import type { ZudokuConfig } from "zudoku";
+import type { ZudokuConfig, ZudokuPlugin } from "zudoku";
 import { PricingPage } from "./src/PricingPage.js";
 import { UsageDashboard } from "./src/UsageDashboard.js";
+
+const overrideCssPlugin: ZudokuPlugin = {
+  getHead: () => <link rel="stylesheet" href="/overrides.css" />,
+};
 
 /**
  * Developer Portal Configuration
@@ -12,7 +16,7 @@ const config: ZudokuConfig = {
     title: "CanYouGrab API",
     logo: {
       src: {
-        light: "/logo-light.svg",
+        light: "/logo-dark.svg",
         dark: "/logo-dark.svg",
       },
     },
@@ -47,27 +51,6 @@ const config: ZudokuConfig = {
       input: "rgba(255, 255, 255, 0.06)",
       ring: "#00d4aa",
     },
-    light: {
-      background: "#ffffff",
-      foreground: "#1a1d24",
-      card: "#f8f9fa",
-      cardForeground: "#1a1d24",
-      popover: "#ffffff",
-      popoverForeground: "#1a1d24",
-      primary: "#00b892",
-      primaryForeground: "#ffffff",
-      secondary: "#f1f3f5",
-      secondaryForeground: "#1a1d24",
-      muted: "#f1f3f5",
-      mutedForeground: "#6b7280",
-      accent: "#f1f3f5",
-      accentForeground: "#1a1d24",
-      destructive: "#ef4444",
-      destructiveForeground: "#ffffff",
-      border: "#e5e7eb",
-      input: "#e5e7eb",
-      ring: "#00b892",
-    },
     customCss: `
       @font-face {
         font-family: 'Outfit';
@@ -83,16 +66,11 @@ const config: ZudokuConfig = {
         font-display: swap;
         src: url(https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTOlOTk6OThhvA.woff2) format('woff2');
       }
+      /* Force dark mode */
+      :root { color-scheme: dark; }
     `,
   },
   navigation: [
-    {
-      type: "link",
-      to: "/settings/api-keys",
-      label: "API Keys",
-      display: "auth",
-      icon: "key",
-    },
     {
       type: "custom-page",
       path: "/usage",
@@ -100,6 +78,13 @@ const config: ZudokuConfig = {
       element: <UsageDashboard />,
       display: "auth",
       icon: "bar-chart",
+    },
+    {
+      type: "link",
+      to: "/settings/api-keys",
+      label: "API Keys",
+      display: "auth",
+      icon: "key",
     },
     {
       type: "custom-page",
@@ -114,7 +99,10 @@ const config: ZudokuConfig = {
       label: "API Reference",
     },
   ],
-  redirects: [{ from: "/", to: "/settings/api-keys" }],
+  redirects: [
+    { from: "/", to: "/usage" },
+    { from: "/api", to: "/api/~endpoints#bulk-domain-availability-check" },
+  ],
   apis: [
     {
       type: "file",
@@ -128,6 +116,7 @@ const config: ZudokuConfig = {
     clientId: "xeaTguUBeoeZg2PmetPVrnQmkud8Ikyq",
     audience: "https://api.canyougrab.it",
   },
+  plugins: [overrideCssPlugin],
   apiKeys: {
     enabled: true,
     createKey: async ({ apiKey, context, auth }: any) => {
