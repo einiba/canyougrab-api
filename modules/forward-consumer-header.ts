@@ -11,5 +11,9 @@ export default async function (
   if (request.user?.sub) {
     request.headers.set("x-consumer", request.user.sub);
   }
+  const plan = (request.user as any)?.data?.plan ?? "";
+  if (plan) {
+    request.headers.set("x-consumer-plan", plan.toLowerCase());
+  }
   return request;
 }

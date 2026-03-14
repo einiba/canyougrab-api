@@ -87,6 +87,33 @@
         "operationId": "new-route-19a1a4e1"
       }
     },
+    "/v1/jobs/{job_id}": {
+      "x-zuplo-path": {
+        "pathMode": "open-api"
+      },
+      "get": {
+        "summary": "Get Job Status",
+        "description": "Check the status of an async bulk domain availability check job. Returns results when all chunks are complete. Poll this endpoint until status is 'completed'.",
+        "x-zuplo-route": {
+          "corsPolicy": "none",
+          "handler": {
+            "export": "urlRewriteHandler",
+            "module": "$import(@zuplo/runtime)",
+            "options": {
+              "rewritePattern": "${env.BASE_URL}/api/jobs/${params.job_id}"
+            }
+          },
+          "policies": {
+            "inbound": [
+              "api-key-inbound",
+              "forward-consumer-header",
+              "rate-limit-inbound-2"
+            ]
+          }
+        },
+        "operationId": "get-job-status"
+      }
+    },
     "/v1/health": {
       "x-zuplo-path": {
         "pathMode": "open-api"
