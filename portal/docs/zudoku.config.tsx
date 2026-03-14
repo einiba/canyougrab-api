@@ -114,7 +114,7 @@ const config: ZudokuConfig = {
   ],
   authentication: {
     type: "auth0",
-    domain: "dev-mqe5tavp6dr62e7u.us.auth0.com",
+    domain: "auth.canyougrab.it",
     clientId: "xeaTguUBeoeZg2PmetPVrnQmkud8Ikyq",
     audience: "https://api.canyougrab.it",
   },
