@@ -39,7 +39,7 @@ def check_domain(domain: str) -> dict:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT domain, tld FROM domains WHERE domain = %s AND tld = %s LIMIT 1",
+                "SELECT domain, tld FROM domains_live WHERE domain = %s AND tld = %s LIMIT 1",
                 (sld, tld),
             )
             row = cur.fetchone()
@@ -56,9 +56,9 @@ def get_zone_info(tld: Optional[str] = None) -> list:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if tld:
-                cur.execute("SELECT tld, loaded_at, record_count FROM zones WHERE tld = %s", (tld,))
+                cur.execute("SELECT tld, loaded_at, record_count FROM zones_live WHERE tld = %s", (tld,))
             else:
-                cur.execute("SELECT tld, loaded_at, record_count FROM zones ORDER BY loaded_at DESC")
+                cur.execute("SELECT tld, loaded_at, record_count FROM zones_live ORDER BY loaded_at DESC")
             return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -72,7 +72,7 @@ def get_tld_list() -> list:
             cur.execute("""
                 SELECT z.tld, z.record_count, z.loaded_at,
                        a.last_compressed_file_size, a.last_file_size
-                FROM zones z
+                FROM zones_live z
                 LEFT JOIN all_TLDs a ON z.tld = a.tld
                 ORDER BY z.tld
             """)
@@ -293,7 +293,7 @@ def check_domain_pooled(domain: str, pool) -> dict:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT domain, tld FROM domains WHERE domain = %s AND tld = %s LIMIT 1",
+                "SELECT domain, tld FROM domains_live WHERE domain = %s AND tld = %s LIMIT 1",
                 (sld, tld),
             )
             row = cur.fetchone()
