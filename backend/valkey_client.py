@@ -13,6 +13,7 @@ import redis
 logger = logging.getLogger(__name__)
 
 JOB_TTL = 3600  # 1 hour
+QUEUE_NAME = os.environ.get('VALKEY_QUEUE_NAME', 'queue:jobs')
 
 _client = None
 
@@ -45,7 +46,7 @@ def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
         'created_at': now,
     })
     pipe.expire(job_key, JOB_TTL)
-    pipe.lpush('queue:jobs', job_key)
+    pipe.lpush(QUEUE_NAME, job_key)
     pipe.execute()
 
     return {

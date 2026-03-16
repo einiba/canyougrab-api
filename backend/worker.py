@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from valkey_client import get_valkey, claim_job, complete_job, fail_job
+from valkey_client import get_valkey, claim_job, complete_job, fail_job, QUEUE_NAME
 from dns_client import create_resolver, check_domain_dns, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT
 
 logging.basicConfig(
@@ -116,12 +116,12 @@ def main():
     # Recover any stale jobs from previous crash
     recover_stale_jobs()
 
-    logger.info('Listening for jobs on queue:jobs...')
+    logger.info('Listening for jobs on %s...', QUEUE_NAME)
 
     while running:
         try:
             # BRPOP blocks for up to BRPOP_TIMEOUT seconds
-            result = r.brpop('queue:jobs', timeout=BRPOP_TIMEOUT)
+            result = r.brpop(QUEUE_NAME, timeout=BRPOP_TIMEOUT)
             if result is None:
                 continue  # timeout, loop to check running flag
 
