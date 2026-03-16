@@ -1,5 +1,5 @@
 """
-FastAPI app for domain availability reads from PostgreSQL zone data.
+FastAPI app for domain availability via DNS.
 Includes API key auth, rate limiting, billing, and key management.
 """
 
@@ -8,13 +8,12 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Query, Body, Depends, HTTPException
+from fastapi import FastAPI, Body, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from auth import APIKeyUser, api_key_auth
 from queries import (
-    get_zone_info, get_tld_list,
     record_usage, get_usage,
     get_monthly_usage, get_monthly_detailed_usage,
     record_hourly_usage, get_hourly_usage, get_hourly_detailed_usage,
@@ -40,7 +39,7 @@ PLAN_HOURLY_LIMITS = {
     'business': 30_000,
 }
 
-app = FastAPI(title='CanYouGrab API', version='4.0.0')
+app = FastAPI(title='CanYouGrab API', version='5.0.0')
 
 app.add_middleware(
     CORSMiddleware,
@@ -160,18 +159,6 @@ async def api_check_bulk(body: dict = Body(...), user: APIKeyUser = Depends(api_
 
 
 # ── Other API routes ──────────────────────────────────────────────
-
-@app.get('/api/tlds')
-def api_tlds(user: APIKeyUser = Depends(api_key_auth)):
-    """List supported TLDs with record counts."""
-    return get_tld_list()
-
-
-@app.get('/api/zones')
-def api_zones(tld: str | None = Query(None)):
-    """List zone load metadata (internal, no auth)."""
-    return get_zone_info(tld)
-
 
 @app.get('/api/account/usage')
 def api_account_usage(user: APIKeyUser = Depends(api_key_auth)):

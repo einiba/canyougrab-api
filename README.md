@@ -1,6 +1,6 @@
 # CanYouGrab API
 
-Domain availability lookup API with subscription billing, built on FastAPI + PostgreSQL zone data.
+Domain availability lookup API with subscription billing, built on FastAPI + DNS (Unbound resolver).
 
 **Live services:**
 - API: `https://api.canyougrab.it`
@@ -18,14 +18,14 @@ Domain availability lookup API with subscription billing, built on FastAPI + Pos
                    │  Auth0 JWT (portal)  /  Bearer API key (API)
                    ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    FastAPI Backend (v4.0.0)                       │
+│                    FastAPI Backend (v5.0.0)                       │
 │                    api.canyougrab.it:8000                         │
 │                                                                  │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
 │  │ app.py      │  │ keys.py  │  │billing.py│  │ auth.py     │  │
 │  │ /check/bulk │  │ /keys    │  │/billing  │  │ API key +   │  │
-│  │ /tlds       │  │ CRUD     │  │/stripe   │  │ JWT auth    │  │
-│  │ /usage      │  │ rotate   │  │ webhook  │  │             │  │
+│  │ /usage      │  │ CRUD     │  │/stripe   │  │ JWT auth    │  │
+│  │             │  │ rotate   │  │ webhook  │  │             │  │
 │  └──────┬──────┘  └──────────┘  └────┬─────┘  └─────────────┘  │
 │         │                            │                           │
 └─────────┼────────────────────────────┼───────────────────────────┘
@@ -39,11 +39,15 @@ Domain availability lookup API with subscription billing, built on FastAPI + Pos
          │
          ▼
 ┌─────────────────┐          ┌──────────────────────────────┐
-│  Worker Process  │────────▶│   PostgreSQL                  │
-│  (worker.py)     │          │   domains_live / zones_live   │
-│  ThreadPool(10)  │          │   (views → domains_YYYYMMDD)  │
-│  BRPOP queue     │          │   API keys + Usage logs       │
-└─────────────────┘          └──────────────────────────────┘
+│  Worker Process  │──DNS──▶ │   Unbound Resolver            │
+│  (worker.py)     │          │   (dedicated droplet)         │
+│  ThreadPool(10)  │          │   NS queries via VPC          │
+│  BRPOP queue     │          └──────────────────────────────┘
+└─────────────────┘
+                             ┌──────────────────────────────┐
+         ───────────────────▶│   PostgreSQL                  │
+          (auth, usage,      │   API keys + Usage logs       │
+           billing only)     └──────────────────────────────┘
 ```
 
 ## Directory Structure
@@ -51,11 +55,12 @@ Domain availability lookup API with subscription billing, built on FastAPI + Pos
 ```
 zuplo/
 ├── backend/                    # Python FastAPI backend (~1500 LOC)
-│   ├── app.py                  # Main API: /check/bulk, /tlds, /usage, /health
+│   ├── app.py                  # Main API: /check/bulk, /usage, /health
 │   ├── auth.py                 # API key auth (SHA-256) + Auth0 JWT auth (RS256)
 │   ├── billing.py              # Stripe checkout, portal, webhooks, usage details
 │   ├── keys.py                 # API key CRUD: create, list, rotate, revoke
-│   ├── queries.py              # PostgreSQL queries: domain lookup, usage tracking
+│   ├── dns_client.py           # DNS-based domain availability checking via Unbound
+│   ├── queries.py              # PostgreSQL queries: usage tracking, auth, billing
 │   ├── valkey_client.py        # Redis/Valkey job queue client
 │   ├── worker.py               # Background job processor (ThreadPoolExecutor)
 │   └── requirements.txt        # Python dependencies
@@ -89,7 +94,6 @@ zuplo/
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/check/bulk` | Check up to 100 domains. Long-polls until results ready (30s max). |
-| `GET` | `/api/tlds` | List 800+ supported TLDs with record counts. |
 | `GET` | `/api/account/usage` | Usage summary for the authenticated consumer. |
 | `GET` | `/api/account/quota-check` | Lightweight monthly + hourly quota check. |
 | `GET` | `/health` | Health check (no auth). |
@@ -110,7 +114,6 @@ zuplo/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/zones` | Zone load metadata (no auth). |
 | `POST` | `/api/account/usage/detailed` | Multi-consumer usage breakdown. |
 | `POST` | `/api/stripe/webhook` | Stripe webhook receiver (signature-verified). |
 
@@ -119,31 +122,32 @@ zuplo/
 ### Domain Availability Check
 
 ```
-Client                    FastAPI                     Valkey                      Worker
-  │                          │                          │                          │
-  │  POST /api/check/bulk    │                          │                          │
-  │  { domains: [...] }      │                          │                          │
-  │─────────────────────────▶│                          │                          │
-  │                          │── validate key ──────────│                          │
-  │                          │── check hourly rate ────▶│ INCR ratelimit:id:hour  │
-  │                          │── check monthly quota ──▶│ (PostgreSQL)             │
-  │                          │── record usage ─────────▶│ (PostgreSQL)             │
-  │                          │── create_job() ─────────▶│ HSET job:{uuid}          │
-  │                          │                          │ LPUSH queue:jobs          │
-  │                          │                          │                          │
-  │                          │                          │◀── BRPOP queue:jobs ─────│
-  │                          │                          │                          │
-  │                          │                          │──── claim_job() ────────▶│
-  │                          │                          │                          │── ThreadPool(10)
-  │                          │                          │                          │── check_domain_pooled()
-  │                          │                          │                          │── SELECT from domains_live
-  │                          │                          │◀── complete_job() ───────│
-  │                          │                          │                          │
-  │                          │◀─ poll get_job_status() ─│                          │
-  │                          │   (0.3s interval, 30s    │                          │
-  │                          │    max timeout)          │                          │
-  │◀─────────────────────────│                          │                          │
-  │  { results: [...] }      │                          │                          │
+Client                    FastAPI                     Valkey                      Worker              Unbound
+  │                          │                          │                          │                    │
+  │  POST /api/check/bulk    │                          │                          │                    │
+  │  { domains: [...] }      │                          │                          │                    │
+  │─────────────────────────▶│                          │                          │                    │
+  │                          │── validate key ──────────│                          │                    │
+  │                          │── check hourly rate ────▶│ INCR ratelimit:id:hour  │                    │
+  │                          │── check monthly quota ──▶│ (PostgreSQL)             │                    │
+  │                          │── record usage ─────────▶│ (PostgreSQL)             │                    │
+  │                          │── create_job() ─────────▶│ HSET job:{uuid}          │                    │
+  │                          │                          │ LPUSH queue:jobs          │                    │
+  │                          │                          │                          │                    │
+  │                          │                          │◀── BRPOP queue:jobs ─────│                    │
+  │                          │                          │                          │                    │
+  │                          │                          │──── claim_job() ────────▶│                    │
+  │                          │                          │                          │── ThreadPool(10)   │
+  │                          │                          │                          │── check_domain_dns()
+  │                          │                          │                          │── NS query ───────▶│
+  │                          │                          │                          │◀── NOERROR/NXDOMAIN│
+  │                          │                          │◀── complete_job() ───────│                    │
+  │                          │                          │                          │                    │
+  │                          │◀─ poll get_job_status() ─│                          │                    │
+  │                          │   (0.3s interval, 30s    │                          │                    │
+  │                          │    max timeout)          │                          │                    │
+  │◀─────────────────────────│                          │                          │                    │
+  │  { results: [...] }      │                          │                          │                    │
 ```
 
 ### Billing / Subscription Flow
@@ -186,44 +190,30 @@ User → Pricing Page → Select Plan → Auth0 login
 - Audience: `https://api.canyougrab.it`
 - Social logins: Google, Apple (Sign in with Apple)
 
+## Domain Availability via DNS
+
+Domain availability is checked by querying a dedicated [Unbound recursive DNS resolver](https://github.com/ericismaking/canyougrab-unbound) running on a separate DigitalOcean droplet. The worker sends NS record queries over the VPC private network and interprets the response:
+
+| DNS Response | `available` | Meaning |
+|---|---|---|
+| NOERROR + NS records | `false` | Domain is registered and delegated |
+| NXDOMAIN | `true` | Domain not in zone — probably available |
+| NoAnswer (NOERROR, no NS) | `false` | Registered but parked/undelegated |
+| SERVFAIL / Timeout | `null` | Ambiguous — check failed |
+
+The Unbound resolver caches aggressively (7 days for registered domains, 5 minutes for NXDOMAIN) and queries TLD authoritative servers directly, avoiding public resolver rate limits.
+
 ## Database Schema
 
-### Zone Data (Zero-Downtime Architecture)
-
-Zone data is stored in **date-suffixed tables** (`domains_YYYYMMDD`, `zones_YYYYMMDD`) and accessed through PostgreSQL views. The [batch loader](https://github.com/ericismaking/canyougrab-batch) writes to fresh tables daily, validates the new data, then atomically swaps the view definitions. This prevents false-positive "available" results during the ~5-hour daily load window.
-
-```
-┌─────────────────────┐       ┌─────────────────────────┐
-│  domains_live (VIEW) │──────▶│  domains_20260314       │  (active)
-│  zones_live   (VIEW) │──────▶│  zones_20260314         │
-└─────────────────────┘       └─────────────────────────┘
-                              ┌─────────────────────────┐
-                              │  domains_20260313       │  (previous, retained for fallback)
-                              │  zones_20260313         │
-                              └─────────────────────────┘
-```
-
-The API reads exclusively through `domains_live` and `zones_live` — it never references date-suffixed tables directly. The `active_dataset` table tracks which date is currently live, its validation status, and the previous date for fallback.
+PostgreSQL is used for authentication, usage tracking, and billing — not for domain lookups.
 
 ### PostgreSQL Tables
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `domains_YYYYMMDD` | Zone file data for a given day (SLD+TLD pairs) | `domain` (SLD), `tld` |
-| `zones_YYYYMMDD` | Zone load metadata per TLD for a given day | `tld`, `loaded_at`, `record_count` |
-| `active_dataset` | Single-row pointer to active date-suffixed tables | `active_date`, `status`, `total_rows`, `validation_log` |
-| `sanity_checks` | Known-registered domains for post-load validation | `domain`, `tld` |
-| `all_TLDs` | TLD catalog with file sizes | `tld`, `last_compressed_file_size`, `last_file_size` |
 | `api_keys` | User API keys | `id`, `user_sub`, `key_hash`, `key_prefix`, `plan`, `lookups_limit`, `revoked_at` |
 | `usage_log` | Daily usage aggregates | `consumer`, `lookups`, `recorded_at` (DATE, unique per consumer+day) |
 | `hourly_usage_log` | Hourly usage aggregates | `consumer`, `lookups`, `hour_start` (TIMESTAMP, unique per consumer+hour) |
-
-### PostgreSQL Views (API reads through these)
-
-| View | Points To | Purpose |
-|------|-----------|---------|
-| `domains_live` | `domains_YYYYMMDD` | Domain availability lookups |
-| `zones_live` | `zones_YYYYMMDD` | TLD metadata and record counts |
 
 ### Valkey (Redis) Data Structures
 
@@ -248,7 +238,7 @@ The API reads exclusively through `domains_live` and `zones_live` — it never r
 
 | Service | Purpose |
 |---------|---------|
-| **DigitalOcean** | Droplets (API servers), Managed PostgreSQL, Managed Valkey |
+| **DigitalOcean** | Droplets (API servers, Unbound resolver), Managed PostgreSQL, Managed Valkey |
 | **Cloudflare** | DNS, CDN, SSL for canyougrab.it zone |
 | **Auth0** | User authentication, social login (Google + Apple), JWT issuance |
 | **Stripe** | Subscription billing, checkout, customer portal, webhooks |
@@ -302,7 +292,12 @@ Both pipelines call `/opt/deploy.sh` on the respective server. This script (on t
 ### Backend (required on servers)
 
 ```bash
-# PostgreSQL (DigitalOcean Managed Database)
+# DNS Resolver (Unbound on dedicated droplet)
+DNS_RESOLVER_HOSTNAME=unbound.canyougrab.internal  # VPC internal hostname (resolved via socket.gethostbyname)
+DNS_RESOLVER_PORT=53
+DNS_QUERY_TIMEOUT=5.0  # Per-query timeout in seconds
+
+# PostgreSQL (DigitalOcean Managed Database — auth, usage, billing only)
 POSTGRES_HOST=         # DB cluster hostname
 POSTGRES_PORT=5432
 POSTGRES_DB=canyougrab
@@ -354,7 +349,7 @@ uvicorn app:app --reload --port 8000
 python worker.py
 ```
 
-Requires local PostgreSQL and Valkey/Redis, or tunnels to managed instances.
+Requires `DNS_RESOLVER_HOST` pointing to an Unbound instance (or use `8.8.8.8` for basic testing), plus PostgreSQL and Valkey/Redis (local or tunneled to managed instances).
 
 ### Portal
 
@@ -374,9 +369,9 @@ Portal dev server hardcodes `API_BASE` to `https://api.canyougrab.it` in `portal
 
 ## Key Design Decisions
 
-- **Zone file approach**: Domain availability is checked against imported TLD zone files stored in PostgreSQL, not live WHOIS/DNS queries. This enables sub-millisecond lookups but requires periodic zone data refresh.
-- **Zero-downtime table swap**: The batch loader writes to date-suffixed tables (`domains_YYYYMMDD`) while the API reads from views (`domains_live`). After validation, `CREATE OR REPLACE VIEW` atomically swaps the read path. This prevents false-positive "available" results during the ~5-hour daily load window. Old tables are retained for 3 days for fallback. See the [batch loader repo](https://github.com/ericismaking/canyougrab-batch) for details.
-- **Job queue for bulk checks**: Even though individual domain lookups are fast, the bulk endpoint uses a Valkey job queue + worker to parallelize across a thread pool and avoid blocking the API event loop.
+- **Live DNS lookups**: Domain availability is checked via NS queries to a dedicated [Unbound recursive resolver](https://github.com/ericismaking/canyougrab-unbound). This gives real-time results (no 24-hour zone file lag), works for any TLD automatically, and avoids the operational complexity of daily batch zone file loading. Unbound caches aggressively (7 days for registered domains) so repeated queries are ~1ms.
+- **Nullable availability**: DNS has more failure modes than a database lookup. When Unbound returns SERVFAIL or times out, the API returns `available: null` instead of a potentially dangerous false positive. Consumers should treat `null` as "could not determine."
+- **Job queue for bulk checks**: The bulk endpoint uses a Valkey job queue + worker to parallelize DNS queries across a thread pool and avoid blocking the API event loop.
 - **Long-polling**: The bulk check endpoint holds the HTTP connection open (polling Valkey every 0.3s, up to 30s) rather than requiring clients to implement polling.
 - **API keys with SHA-256 hashing**: Keys are hashed before storage (like passwords), so a database breach doesn't expose raw keys.
 - **Stripe metadata linking**: Stripe customers are linked to Auth0 users via `auth0_sub` metadata on the Stripe customer object, avoiding a separate mapping table.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Background worker for processing bulk domain availability jobs.
-Pulls job keys from Valkey queue, processes domains, stores results.
+Pulls job keys from Valkey queue, checks domains via DNS, stores results.
 Each job is a single unit of up to 100 domains — no chunking.
 """
 
@@ -13,10 +13,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-import psycopg2.pool
-
 from valkey_client import get_valkey, claim_job, complete_job, fail_job
-from queries import check_domain_pooled
+from dns_client import create_resolver, check_domain_dns, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,21 +34,7 @@ def handle_signal(signum, frame):
     running = False
 
 
-def create_db_pool():
-    """Create a threaded PostgreSQL connection pool for the worker."""
-    return psycopg2.pool.ThreadedConnectionPool(
-        minconn=1,
-        maxconn=BATCH_CONCURRENCY,
-        host=os.environ.get('POSTGRES_HOST', 'localhost'),
-        port=os.environ.get('POSTGRES_PORT', '5432'),
-        dbname=os.environ.get('POSTGRES_DB', 'canyougrab'),
-        user=os.environ.get('POSTGRES_USER', 'canyougrab'),
-        password=os.environ.get('POSTGRES_PASSWORD', ''),
-        sslmode=os.environ.get('POSTGRES_SSLMODE', 'require'),
-    )
-
-
-def process_job(job_key: str, db_pool):
+def process_job(job_key: str, resolver):
     """Process a single job: check all domains and store results."""
     # Parse job key: job:{job_id}
     parts = job_key.split(':', 1)
@@ -75,7 +59,7 @@ def process_job(job_key: str, db_pool):
         # Process domains concurrently using thread pool
         with ThreadPoolExecutor(max_workers=BATCH_CONCURRENCY) as executor:
             futures = [
-                executor.submit(check_domain_pooled, domain, db_pool)
+                executor.submit(check_domain_dns, domain, resolver)
                 for domain in domains
             ]
             results = [f.result() for f in futures]
@@ -120,9 +104,14 @@ def main():
     r.ping()
     logger.info('Valkey connected')
 
-    # Create DB connection pool
-    db_pool = create_db_pool()
-    logger.info('PostgreSQL pool created (max=%d)', BATCH_CONCURRENCY)
+    # Create DNS resolver and verify connectivity
+    resolver = create_resolver()
+    try:
+        resolver.resolve('google.com', 'NS')
+        logger.info('DNS resolver connected (%s:%d)', DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT)
+    except Exception as e:
+        logger.error('DNS resolver unreachable at %s:%d: %s', DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT, e)
+        sys.exit(1)
 
     # Recover any stale jobs from previous crash
     recover_stale_jobs()
@@ -137,7 +126,7 @@ def main():
                 continue  # timeout, loop to check running flag
 
             queue_name, job_key = result
-            process_job(job_key, db_pool)
+            process_job(job_key, resolver)
 
         except KeyboardInterrupt:
             break
@@ -146,7 +135,6 @@ def main():
             time.sleep(1)
 
     logger.info('Worker shutting down')
-    db_pool.closeall()
 
 
 if __name__ == '__main__':
