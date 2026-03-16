@@ -21,7 +21,7 @@ from queries import get_db_conn
 
 logger = logging.getLogger(__name__)
 
-AUTH0_DOMAIN = os.environ.get('AUTH0_DOMAIN', 'dev-mqe5tavp6dr62e7u.us.auth0.com')
+AUTH0_DOMAIN = os.environ.get('AUTH0_DOMAIN', 'auth.canyougrab.it')
 AUTH0_AUDIENCE = os.environ.get('AUTH0_AUDIENCE', 'https://api.canyougrab.it')
 AUTH0_ISSUER = f'https://{AUTH0_DOMAIN}/'
 JWKS_URL = f'https://{AUTH0_DOMAIN}/.well-known/jwks.json'
