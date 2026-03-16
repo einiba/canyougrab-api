@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "version": "4.0.0",
+    "version": "5.0.0",
     "title": "CanYouGrab API"
   },
   "servers": [
@@ -49,8 +49,9 @@
                         "type": "object",
                         "properties": {
                           "domain": { "type": "string" },
-                          "available": { "type": "boolean" },
-                          "tld": { "type": "string" }
+                          "available": { "type": ["boolean", "null"] },
+                          "tld": { "type": "string" },
+                          "error": { "type": "string" }
                         }
                       }
                     }
@@ -68,18 +69,6 @@
           "400": { "description": "Invalid request (empty array or exceeds 100 domains)" },
           "401": { "description": "Missing or invalid API key" },
           "429": { "description": "Rate limit or quota exceeded" }
-        },
-        "security": [{ "apiKey": [] }]
-      }
-    },
-    "/api/tlds": {
-      "get": {
-        "summary": "List Supported TLDs",
-        "description": "Returns all 800+ top-level domains supported by the API, with record counts and last-updated timestamps.",
-        "operationId": "list-tlds",
-        "responses": {
-          "200": { "description": "Array of supported TLDs with metadata" },
-          "401": { "description": "Missing or invalid API key" }
         },
         "security": [{ "apiKey": [] }]
       }

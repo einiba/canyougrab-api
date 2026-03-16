@@ -1,9 +1,8 @@
 """
-Query logic for domain availability from PostgreSQL zone data.
+PostgreSQL queries for usage tracking, auth, and billing.
 """
 
 import os
-from typing import Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -20,65 +19,6 @@ def get_db_conn():
     sslmode = os.environ.get('POSTGRES_SSLMODE', 'require')
     kwargs['sslmode'] = sslmode
     return psycopg2.connect(**kwargs)
-
-
-def check_domain(domain: str) -> dict:
-    """Check if domain exists in zone data. Splits input into SLD + TLD to match DB schema."""
-    domain = domain.lower().strip().rstrip('.')
-    if not domain or '..' in domain:
-        return {"domain": domain, "available": True, "error": "invalid domain"}
-
-    parts = domain.split('.')
-    if len(parts) < 2:
-        return {"domain": domain, "available": True, "error": "need at least sld.tld"}
-
-    sld = parts[-2]
-    tld = parts[-1]
-
-    conn = get_db_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT domain, tld FROM domains WHERE domain = %s AND tld = %s LIMIT 1",
-                (sld, tld),
-            )
-            row = cur.fetchone()
-        if row:
-            return {"domain": domain, "available": False, "tld": row["tld"]}
-        return {"domain": domain, "available": True}
-    finally:
-        conn.close()
-
-
-def get_zone_info(tld: Optional[str] = None) -> list:
-    """Get zone load metadata."""
-    conn = get_db_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            if tld:
-                cur.execute("SELECT tld, loaded_at, record_count FROM zones WHERE tld = %s", (tld,))
-            else:
-                cur.execute("SELECT tld, loaded_at, record_count FROM zones ORDER BY loaded_at DESC")
-            return [dict(r) for r in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-def get_tld_list() -> list:
-    """Get list of supported TLDs with record counts for the public API."""
-    conn = get_db_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT z.tld, z.record_count, z.loaded_at,
-                       a.last_compressed_file_size, a.last_file_size
-                FROM zones z
-                LEFT JOIN all_TLDs a ON z.tld = a.tld
-                ORDER BY z.tld
-            """)
-            return [dict(r) for r in cur.fetchall()]
-    finally:
-        conn.close()
 
 
 def _ensure_usage_table(conn):
@@ -276,29 +216,3 @@ def get_hourly_detailed_usage(consumers: list) -> dict:
         conn.close()
 
 
-def check_domain_pooled(domain: str, pool) -> dict:
-    """Check domain using a connection pool (for worker). Same logic as check_domain()."""
-    domain = domain.lower().strip().rstrip('.')
-    if not domain or '..' in domain:
-        return {"domain": domain, "available": True, "error": "invalid domain"}
-
-    parts = domain.split('.')
-    if len(parts) < 2:
-        return {"domain": domain, "available": True, "error": "need at least sld.tld"}
-
-    sld = parts[-2]
-    tld = parts[-1]
-
-    conn = pool.getconn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT domain, tld FROM domains WHERE domain = %s AND tld = %s LIMIT 1",
-                (sld, tld),
-            )
-            row = cur.fetchone()
-        if row:
-            return {"domain": domain, "available": False, "tld": row["tld"]}
-        return {"domain": domain, "available": True}
-    finally:
-        pool.putconn(conn)
