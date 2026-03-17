@@ -52,24 +52,24 @@ def check_domain_dns(domain: str, resolver: dns.resolver.Resolver) -> dict:
     try:
         resolver.resolve(domain, 'NS')
         # NOERROR with NS records — domain is registered
-        return {"domain": domain, "available": False, "tld": tld}
+        return {"domain": domain, "available": False, "tld": tld, "dns_status": "noerror_ns"}
 
     except dns.resolver.NXDOMAIN:
         # Domain does not exist in zone — probably available
-        return {"domain": domain, "available": True}
+        return {"domain": domain, "available": True, "tld": tld, "dns_status": "nxdomain"}
 
     except dns.resolver.NoAnswer:
         # Domain exists but has no NS records (registered but parked/undelegated)
-        return {"domain": domain, "available": False, "tld": tld}
+        return {"domain": domain, "available": False, "tld": tld, "dns_status": "noanswer"}
 
     except dns.resolver.NoNameservers:
         # All nameservers failed (SERVFAIL) — ambiguous, do not claim available
         logger.warning('SERVFAIL for domain %s', domain)
-        return {"domain": domain, "available": None, "error": "dns_servfail"}
+        return {"domain": domain, "available": None, "error": "dns_servfail", "dns_status": "servfail"}
 
     except dns.exception.Timeout:
         logger.warning('DNS timeout for domain %s', domain)
-        return {"domain": domain, "available": None, "error": "dns_timeout"}
+        return {"domain": domain, "available": None, "error": "dns_timeout", "dns_status": "timeout"}
 
     except Exception as e:
         logger.exception('Unexpected DNS error for domain %s', domain)

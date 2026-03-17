@@ -14,7 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from valkey_client import get_valkey, claim_job, complete_job, fail_job, QUEUE_NAME
-from dns_client import create_resolver, check_domain_dns, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT
+from dns_client import create_resolver, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT
+from whois_client import WHOIS_HOSTNAME, WHOIS_PORT
+from lookup import check_domain
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +61,7 @@ def process_job(job_key: str, resolver):
         # Process domains concurrently using thread pool
         with ThreadPoolExecutor(max_workers=BATCH_CONCURRENCY) as executor:
             futures = [
-                executor.submit(check_domain_dns, domain, resolver)
+                executor.submit(check_domain, domain, resolver)
                 for domain in domains
             ]
             results = [f.result() for f in futures]
@@ -112,6 +114,14 @@ def main():
     except Exception as e:
         logger.error('DNS resolver unreachable at %s:%d: %s', DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT, e)
         sys.exit(1)
+
+    # Verify rust-whois connectivity (non-fatal — WHOIS is best-effort)
+    try:
+        from whois_client import _get_base_url, check_domain_whois
+        base = _get_base_url()
+        logger.info('WHOIS service resolved (%s:%d → %s)', WHOIS_HOSTNAME, WHOIS_PORT, base)
+    except Exception as e:
+        logger.warning('WHOIS service unreachable at %s:%d: %s (will fall back to DNS-only)', WHOIS_HOSTNAME, WHOIS_PORT, e)
 
     # Recover any stale jobs from previous crash
     recover_stale_jobs()

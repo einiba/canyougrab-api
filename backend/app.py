@@ -1,6 +1,6 @@
 """
-FastAPI app for domain availability via DNS.
-Includes API key auth, rate limiting, billing, and key management.
+FastAPI app for domain availability via DNS + WHOIS verification.
+Includes Valkey domain cache, API key auth, rate limiting, billing, and key management.
 """
 
 import asyncio
@@ -39,7 +39,7 @@ PLAN_HOURLY_LIMITS = {
     'business': 30_000,
 }
 
-app = FastAPI(title='CanYouGrab API', version='5.0.0')
+app = FastAPI(title='CanYouGrab API', version='6.0.0')
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,7 +85,7 @@ def _check_rate_limit(consumer_id: str, plan: str):
 # ── Bulk domain check (long-poll) ─────────────────────────────────
 
 POLL_INTERVAL = 0.3   # seconds between Valkey polls
-POLL_TIMEOUT = 30.0   # max seconds to wait for results
+POLL_TIMEOUT = 45.0   # max seconds to wait for results (increased for WHOIS lookups)
 
 
 @app.post('/api/check/bulk')
@@ -154,7 +154,7 @@ async def api_check_bulk(body: dict = Body(...), user: APIKeyUser = Depends(api_
 
     return JSONResponse({
         'error': 'Processing timeout',
-        'message': 'Results were not ready within 30 seconds. Please retry.',
+        'message': 'Results were not ready within 45 seconds. Please retry.',
     }, status_code=504)
 
 
