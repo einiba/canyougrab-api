@@ -7,9 +7,6 @@
     "dev": "npm -w docs run dev",
     "build": "npm -w docs run build"
   },
-  "dependencies": {
-    "zuplo": "^6"
-  },
   "devDependencies": {
     "@types/node": "^22",
     "typescript": "^5"

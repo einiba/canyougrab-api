@@ -1,15 +1,47 @@
 {
   "version": 3,
   "framework": {
-    "version": "0.71.2"
+    "version": "0.71.6"
   },
   "routes": [
     {
-      "src": "/docs",
-      "dest": "/docs/~endpoints#bulk-domain-availability-check",
+      "src": "/",
+      "dest": "/usage",
       "status": 301,
       "headers": {
-        "Location": "/docs/~endpoints#bulk-domain-availability-check"
+        "Location": "/usage"
+      }
+    },
+    {
+      "src": "/docs",
+      "dest": "/docs/~endpoints",
+      "status": 301,
+      "headers": {
+        "Location": "/docs/~endpoints"
+      }
+    },
+    {
+      "src": "/docs",
+      "dest": "/docs/~endpoints",
+      "status": 301,
+      "headers": {
+        "Location": "/docs/~endpoints"
+      }
+    },
+    {
+      "src": "/",
+      "dest": "/usage",
+      "status": 301,
+      "headers": {
+        "Location": "/usage"
+      }
+    },
+    {
+      "src": "/docs",
+      "dest": "/docs/~endpoints",
+      "status": 301,
+      "headers": {
+        "Location": "/docs/~endpoints"
       }
     }
   ]

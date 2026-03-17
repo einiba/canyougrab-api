@@ -4,14 +4,13 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "zudoku dev --zuplo",
-    "build": "zudoku build --zuplo"
+    "dev": "zudoku dev",
+    "build": "zudoku build"
   },
   "dependencies": {
     "react": "^19",
     "react-dom": "^19",
     "@mdx-js/react": "3.0.1",
-    "@zuplo/zudoku-plugin-monetization": "^0.0",
     "zudoku": "^0.71"
   },
   "devDependencies": {
