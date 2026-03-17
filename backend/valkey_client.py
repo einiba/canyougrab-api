@@ -112,7 +112,7 @@ def complete_job(job_id: str, results: list, queued_at: str = ''):
     now_iso = now.isoformat()
     job_key = f'job:{job_id}'
 
-    # Compute response_time_ms from queued_at to now
+    # Compute response_time_ms as job-level metadata
     response_time_ms = None
     if queued_at:
         try:
@@ -121,19 +121,17 @@ def complete_job(job_id: str, results: list, queued_at: str = ''):
         except (ValueError, TypeError):
             pass
 
-    # Enrich each domain result with timing info
-    for result in results:
-        result['queued_at'] = queued_at
-        result['completed_at'] = now_iso
-        if response_time_ms is not None:
-            result['response_time_ms'] = response_time_ms
-
     pipe = r.pipeline(transaction=True)
-    pipe.hset(job_key, mapping={
+    job_mapping = {
         'status': 'completed',
         'results': json.dumps(results),
         'completed_at': now_iso,
-    })
+    }
+    if queued_at:
+        job_mapping['queued_at'] = queued_at
+    if response_time_ms is not None:
+        job_mapping['response_time_ms'] = str(response_time_ms)
+    pipe.hset(job_key, mapping=job_mapping)
     pipe.expire(job_key, JOB_TTL)
     pipe.execute()
 

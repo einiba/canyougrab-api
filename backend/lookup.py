@@ -6,7 +6,7 @@ Orchestrates the 3-step lookup:
   2. DNS NS query to Unbound
   3. WHOIS/RDAP query to rust-whois (only for NXDOMAIN results)
 
-Results are cached in Valkey with smart TTLs.
+Returns v7 response shape with confidence scoring.
 """
 
 import logging
@@ -24,17 +24,17 @@ logger = logging.getLogger(__name__)
 def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     """Full lookup pipeline for a single domain.
 
-    Returns a dict suitable for API response:
+    Returns v7 response dict:
         {
-            "domain": "example.com",
+            "domain": str,
             "available": bool | None,
+            "confidence": "high" | "medium" | "low",
             "tld": str,
-            "registrar": str | None,
-            "expiration_date": str | None,
-            "name_servers": list[str] | None,
-            "source": "cache" | "dns" | "dns+whois",
-            "cached": bool,
-            ...
+            "source": "cache" | "dns" | "whois",
+            "checked_at": str (ISO 8601),
+            "cache_age_seconds": int,
+            "registration": {...} | None,
+            "error": str (only when available is null),
         }
     """
     domain = domain.lower().strip().rstrip('.')
@@ -49,34 +49,51 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     dns_result = check_domain_dns(domain, resolver)
 
     available = dns_result.get('available')
-    tld = dns_result.get('tld')
+    tld = dns_result.get('tld', '')
     error = dns_result.get('error')
 
-    # DNS error — return immediately, don't cache
+    # DNS error (SERVFAIL / timeout) — return low confidence, don't cache
     if available is None:
-        dns_result['source'] = 'dns'
-        dns_result['cached'] = False
-        return dns_result
+        return {
+            'domain': domain,
+            'available': None,
+            'confidence': 'low',
+            'tld': tld,
+            'source': 'dns',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+            'error': error or 'dns_error',
+        }
 
-    # Registered (NOERROR+NS or NoAnswer) — cache and return
+    # Validation errors (invalid domain, missing TLD) — return as-is
+    if error:
+        return {
+            'domain': domain,
+            'available': available,
+            'confidence': 'low',
+            'tld': tld,
+            'source': 'dns',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+            'error': error,
+        }
+
+    # Registered (NOERROR+NS or NoAnswer) — high confidence, cache and return
     if available is False:
         result = {
             'domain': domain,
             'available': False,
+            'confidence': 'high',
             'tld': tld,
-            'dns_status': dns_result.get('dns_status', 'noerror_ns'),
             'source': 'dns',
-            'cached': False,
-            'dns_checked_at': now,
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
         }
         cache_domain(domain, result)
         return result
-
-    # Validation errors — return as-is, don't cache
-    if error:
-        dns_result['source'] = 'dns'
-        dns_result['cached'] = False
-        return dns_result
 
     # ── Step 3: WHOIS verification (DNS said NXDOMAIN) ───────────
     whois_data = check_domain_whois(domain)
@@ -86,35 +103,46 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         result = {
             'domain': domain,
             'available': False,
+            'confidence': 'high',
             'tld': tld,
-            'dns_status': 'nxdomain',
-            'registrar': whois_data.get('registrar'),
-            'creation_date': whois_data.get('creation_date'),
-            'expiration_date': whois_data.get('expiration_date'),
-            'updated_date': whois_data.get('updated_date'),
-            'name_servers': whois_data.get('name_servers'),
-            'status_codes': whois_data.get('status'),
-            'whois_server': whois_data.get('whois_server'),
-            'source': 'dns+whois',
-            'cached': False,
-            'dns_checked_at': now,
-            'whois_checked_at': now,
+            'source': 'whois',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': {
+                'registrar': whois_data.get('registrar'),
+                'created_at': whois_data.get('creation_date'),
+                'expires_at': whois_data.get('expiration_date'),
+                'updated_at': whois_data.get('updated_date'),
+            },
         }
         cache_domain(domain, result)
         return result
 
-    # WHOIS also confirms available (or WHOIS failed/returned no expiry)
+    # WHOIS confirms available (no record found)
+    if whois_data is not None:
+        result = {
+            'domain': domain,
+            'available': True,
+            'confidence': 'high',
+            'tld': tld,
+            'source': 'whois',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+        }
+        cache_domain(domain, result)
+        return result
+
+    # WHOIS failed/timed out — DNS NXDOMAIN is our only signal
     result = {
         'domain': domain,
         'available': True,
+        'confidence': 'medium',
         'tld': tld,
-        'dns_status': 'nxdomain',
-        'source': 'dns+whois' if whois_data is not None else 'dns',
-        'cached': False,
-        'dns_checked_at': now,
+        'source': 'dns',
+        'checked_at': now,
+        'cache_age_seconds': 0,
+        'registration': None,
     }
-    if whois_data is not None:
-        result['whois_checked_at'] = now
-
     cache_domain(domain, result)
     return result

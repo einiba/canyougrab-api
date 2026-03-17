@@ -7,6 +7,11 @@ TTL strategy:
   - Registered + no expiry:       24 hours
   - Available (NXDOMAIN):         5 minutes (matches Unbound negative TTL)
   - DNS errors:                   not cached
+
+Cache reads return v7 response shape with:
+  - confidence (with staleness downgrade for entries > 24h old)
+  - nested registration object
+  - checked_at / cache_age_seconds
 """
 
 import json
@@ -21,22 +26,17 @@ logger = logging.getLogger(__name__)
 CACHE_AVAILABLE_TTL = 300          # 5 minutes for available domains
 CACHE_REGISTERED_DEFAULT_TTL = 86400  # 24 hours when no expiry date
 CACHE_REGISTERED_MAX_TTL = 604800    # 7 days cap even if expiry is years away
+STALENESS_THRESHOLD = 86400          # 24 hours — after this, downgrade confidence
 
 
 def _compute_ttl(available: bool | None, expiration_date: str | None) -> int | None:
-    """Compute the Valkey key TTL based on availability and WHOIS expiry.
-
-    Returns TTL in seconds, or None if the result should not be cached.
-    """
-    # Never cache errors / unknowns
+    """Compute the Valkey key TTL based on availability and WHOIS expiry."""
     if available is None:
         return None
 
-    # Available domains: short TTL
     if available is True:
         return CACHE_AVAILABLE_TTL
 
-    # Registered: use expiry if available, otherwise default
     if expiration_date:
         try:
             exp_dt = datetime.fromisoformat(expiration_date.replace('Z', '+00:00'))
@@ -49,12 +49,11 @@ def _compute_ttl(available: bool | None, expiration_date: str | None) -> int | N
     return CACHE_REGISTERED_DEFAULT_TTL
 
 
-def get_cached_domain(domain: str) -> dict | None:
-    """Look up a domain in the cache.
+_CONFIDENCE_DOWNGRADE = {'high': 'medium', 'medium': 'low', 'low': 'low'}
 
-    Returns a dict with all cached fields, or None on cache miss.
-    The returned dict always includes 'cached': True.
-    """
+
+def get_cached_domain(domain: str) -> dict | None:
+    """Look up a domain in the cache. Returns v7-shaped dict or None."""
     r = get_valkey()
     key = f'dom:{domain}'
 
@@ -67,38 +66,64 @@ def get_cached_domain(domain: str) -> dict | None:
     if not data:
         return None
 
-    # Deserialize
-    result = {
-        'domain': domain,
-        'cached': True,
-        'source': data.get('source', 'cache'),
-    }
-
-    # available: stored as string "true"/"false"/"null"
+    # Parse available
     avail_str = data.get('available')
     if avail_str == 'true':
-        result['available'] = True
+        available = True
     elif avail_str == 'false':
-        result['available'] = False
+        available = False
     else:
-        result['available'] = None
+        available = None
 
-    # Simple string fields
-    for field in ('tld', 'dns_status', 'registrar', 'creation_date',
-                  'expiration_date', 'updated_date', 'whois_server',
-                  'dns_checked_at', 'whois_checked_at', 'error'):
-        val = data.get(field)
-        if val:
-            result[field] = val
+    # Compute cache_age_seconds
+    cached_at = data.get('cached_at', '')
+    cache_age_seconds = 0
+    if cached_at:
+        try:
+            cached_dt = datetime.fromisoformat(cached_at)
+            cache_age_seconds = max(0, int((datetime.now(timezone.utc) - cached_dt).total_seconds()))
+        except (ValueError, TypeError):
+            pass
 
-    # JSON array fields
-    for field in ('name_servers', 'status_codes'):
-        val = data.get(field)
-        if val:
-            try:
-                result[field] = json.loads(val)
-            except (json.JSONDecodeError, TypeError):
-                pass
+    # Compute confidence with staleness downgrade
+    original_confidence = data.get('confidence', 'medium')
+    if cache_age_seconds > STALENESS_THRESHOLD:
+        confidence = _CONFIDENCE_DOWNGRADE.get(original_confidence, 'low')
+    else:
+        confidence = original_confidence
+
+    result = {
+        'domain': domain,
+        'available': available,
+        'confidence': confidence,
+        'tld': data.get('tld', ''),
+        'source': 'cache',
+        'checked_at': cached_at,
+        'cache_age_seconds': cache_age_seconds,
+    }
+
+    # Build registration object for taken domains
+    if available is False:
+        registrar = data.get('registrar')
+        created_at = data.get('created_at')
+        expires_at = data.get('expires_at')
+        updated_at = data.get('updated_at')
+        if registrar or created_at or expires_at or updated_at:
+            result['registration'] = {
+                'registrar': registrar or None,
+                'created_at': created_at or None,
+                'expires_at': expires_at or None,
+                'updated_at': updated_at or None,
+            }
+        else:
+            result['registration'] = None
+    else:
+        result['registration'] = None
+
+    # Error field
+    error = data.get('error')
+    if error:
+        result['error'] = error
 
     return result
 
@@ -106,22 +131,23 @@ def get_cached_domain(domain: str) -> dict | None:
 def cache_domain(domain: str, data: dict) -> None:
     """Write a domain lookup result to the cache.
 
-    data should include at minimum:
-        available: bool | None
-        source: str ('dns', 'whois', 'dns+whois')
-    And optionally any of the enrichment fields.
+    Expects v7-shaped data with 'available', 'confidence', 'source',
+    'checked_at', and optionally 'registration' dict and 'error'.
     """
     available = data.get('available')
-    expiration_date = data.get('expiration_date')
-    ttl = _compute_ttl(available, expiration_date)
+
+    # Extract expires_at for TTL computation
+    reg = data.get('registration') or {}
+    expires_at = reg.get('expires_at')
+    ttl = _compute_ttl(available, expires_at)
 
     if ttl is None:
-        return  # Don't cache errors
+        return
 
     r = get_valkey()
     key = f'dom:{domain}'
 
-    # Serialize available as string
+    # Serialize available
     if available is True:
         avail_str = 'true'
     elif available is False:
@@ -129,21 +155,25 @@ def cache_domain(domain: str, data: dict) -> None:
     else:
         avail_str = 'null'
 
-    mapping = {'available': avail_str}
+    mapping = {
+        'available': avail_str,
+        'cached_at': data.get('checked_at', datetime.now(timezone.utc).isoformat()),
+        'confidence': data.get('confidence', 'medium'),
+        'original_source': data.get('source', 'dns'),
+    }
 
     # Simple string fields
-    for field in ('tld', 'dns_status', 'registrar', 'creation_date',
-                  'expiration_date', 'updated_date', 'whois_server',
-                  'source', 'dns_checked_at', 'whois_checked_at', 'error'):
+    for field in ('tld', 'error'):
         val = data.get(field)
         if val is not None:
             mapping[field] = str(val)
 
-    # JSON array fields
-    for field in ('name_servers', 'status_codes'):
-        val = data.get(field)
-        if val is not None:
-            mapping[field] = json.dumps(val)
+    # Flatten registration object into cache hash
+    if reg:
+        for field in ('registrar', 'created_at', 'expires_at', 'updated_at'):
+            val = reg.get(field)
+            if val is not None:
+                mapping[field] = str(val)
 
     try:
         pipe = r.pipeline(transaction=True)

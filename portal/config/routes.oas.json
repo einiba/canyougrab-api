@@ -1,8 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "version": "5.0.0",
-    "title": "CanYouGrab API"
+    "version": "7.0.0",
+    "title": "CanYouGrab API",
+    "description": "Confidence-scored domain intelligence for AI agents. Fast DNS lookups with on-demand WHOIS verification and smart caching."
   },
   "servers": [
     {
@@ -13,8 +14,17 @@
     "/api/check/bulk": {
       "post": {
         "summary": "Bulk Domain Availability Check",
-        "description": "Check availability of multiple domain names in a single request. Maximum 100 domains per request. Returns results synchronously.",
+        "description": "Check availability of up to 100 domains in a single request. Each result includes a confidence score, data source, cache freshness, and registration details when available.\n\nThe lookup pipeline: Valkey cache → DNS (Unbound) → WHOIS/RDAP (rust-whois). DNS-only results return in <100ms. WHOIS verification adds 200-1000ms but only runs when DNS indicates a domain may be available.",
         "operationId": "bulk-domain-check",
+        "parameters": [
+          {
+            "name": "verbose",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": false },
+            "description": "When true, includes job-level timing metadata (job_id, queued_at, completed_at) in the response."
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28,7 +38,7 @@
                     "items": { "type": "string" },
                     "maxItems": 100,
                     "description": "Array of domain names to check (max 100)",
-                    "example": ["example.com", "startup.io", "myapp.dev"]
+                    "example": ["google.com", "my-cool-startup.io", "example.museum"]
                   }
                 }
               }
@@ -37,7 +47,7 @@
         },
         "responses": {
           "200": {
-            "description": "Domain availability results",
+            "description": "Domain availability results with confidence scores",
             "content": {
               "application/json": {
                 "schema": {
@@ -48,20 +58,115 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "domain": { "type": "string" },
-                          "available": { "type": ["boolean", "null"] },
-                          "tld": { "type": "string" },
-                          "error": { "type": "string" }
+                          "domain": {
+                            "type": "string",
+                            "description": "The domain name that was checked"
+                          },
+                          "available": {
+                            "type": ["boolean", "null"],
+                            "description": "true = registrable, false = registered, null = could not determine"
+                          },
+                          "confidence": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                            "description": "high = verified by DNS+WHOIS or fresh DNS with active NS records. medium = DNS only (WHOIS unavailable). low = DNS failure or stale cache."
+                          },
+                          "tld": {
+                            "type": "string",
+                            "description": "Top-level domain extracted from the query"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": ["dns", "whois", "cache"],
+                            "description": "How this result was determined. dns = Unbound NS query. whois = RDAP/WHOIS verification. cache = served from Valkey cache."
+                          },
+                          "checked_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "ISO 8601 timestamp of when this data was gathered"
+                          },
+                          "cache_age_seconds": {
+                            "type": "integer",
+                            "description": "Seconds since this data was originally looked up. 0 = fresh lookup just now."
+                          },
+                          "registration": {
+                            "type": ["object", "null"],
+                            "description": "Registration details for taken domains. null when domain is available or WHOIS data unavailable.",
+                            "properties": {
+                              "registrar": {
+                                "type": ["string", "null"],
+                                "description": "Domain registrar name"
+                              },
+                              "created_at": {
+                                "type": ["string", "null"],
+                                "format": "date-time",
+                                "description": "Domain creation date"
+                              },
+                              "expires_at": {
+                                "type": ["string", "null"],
+                                "format": "date-time",
+                                "description": "Domain expiration date"
+                              },
+                              "updated_at": {
+                                "type": ["string", "null"],
+                                "format": "date-time",
+                                "description": "Last WHOIS record update"
+                              }
+                            }
+                          },
+                          "error": {
+                            "type": "string",
+                            "description": "Error code when available is null (e.g. dns_servfail, dns_timeout)"
+                          }
                         }
                       }
                     }
                   }
                 },
-                "example": {
-                  "results": [
-                    { "domain": "example.com", "available": false, "tld": "com" },
-                    { "domain": "startup.io", "available": true }
-                  ]
+                "examples": {
+                  "mixed_results": {
+                    "summary": "Typical response with registered, available, and error results",
+                    "value": {
+                      "results": [
+                        {
+                          "domain": "google.com",
+                          "available": false,
+                          "confidence": "high",
+                          "tld": "com",
+                          "source": "cache",
+                          "checked_at": "2026-03-17T14:24:59+00:00",
+                          "cache_age_seconds": 3821,
+                          "registration": {
+                            "registrar": "MarkMonitor Inc.",
+                            "created_at": "1997-09-15T04:00:00+00:00",
+                            "expires_at": "2028-09-14T04:00:00+00:00",
+                            "updated_at": "2024-08-02T00:00:00+00:00"
+                          }
+                        },
+                        {
+                          "domain": "my-cool-startup.io",
+                          "available": true,
+                          "confidence": "high",
+                          "tld": "io",
+                          "source": "whois",
+                          "checked_at": "2026-03-17T15:01:12+00:00",
+                          "cache_age_seconds": 0,
+                          "registration": null
+                        },
+                        {
+                          "domain": "example.museum",
+                          "available": null,
+                          "confidence": "low",
+                          "tld": "museum",
+                          "source": "dns",
+                          "checked_at": "2026-03-17T15:01:12+00:00",
+                          "cache_age_seconds": 0,
+                          "registration": null,
+                          "error": "dns_servfail"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }

@@ -1,5 +1,5 @@
 """
-FastAPI app for domain availability via DNS + WHOIS verification.
+FastAPI app for confidence-scored domain intelligence via DNS + WHOIS.
 Includes Valkey domain cache, API key auth, rate limiting, billing, and key management.
 """
 
@@ -8,7 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Body, Depends, HTTPException
+from fastapi import FastAPI, Body, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -39,7 +39,7 @@ PLAN_HOURLY_LIMITS = {
     'business': 30_000,
 }
 
-app = FastAPI(title='CanYouGrab API', version='6.0.0')
+app = FastAPI(title='CanYouGrab API', version='7.0.0')
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,7 +89,11 @@ POLL_TIMEOUT = 45.0   # max seconds to wait for results (increased for WHOIS loo
 
 
 @app.post('/api/check/bulk')
-async def api_check_bulk(body: dict = Body(...), user: APIKeyUser = Depends(api_key_auth)):
+async def api_check_bulk(
+    body: dict = Body(...),
+    user: APIKeyUser = Depends(api_key_auth),
+    verbose: bool = Query(False, description='Include internal timing and debug fields'),
+):
     """Check availability of up to 100 domains. Holds connection open until results are ready."""
     domains = body.get('domains', [])
     if not isinstance(domains, list) or not domains:
@@ -145,7 +149,13 @@ async def api_check_bulk(body: dict = Body(...), user: APIKeyUser = Depends(api_
         if job is None:
             continue
         if job['status'] == 'completed':
-            return {'results': get_job_results(job_id)}
+            results = get_job_results(job_id)
+            response = {'results': results}
+            if verbose:
+                response['job_id'] = job_id
+                response['queued_at'] = job.get('created_at', '')
+                response['completed_at'] = job.get('completed_at', '')
+            return response
         if job['status'] == 'failed':
             return JSONResponse({
                 'error': 'Job processing failed',
