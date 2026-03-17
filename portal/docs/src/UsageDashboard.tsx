@@ -28,10 +28,19 @@ interface UsageData {
 }
 
 const PLAN_RATE_LIMITS: Record<string, number> = {
-  starter: 100,
+  free: 15,
+  free_plus: 50,
   basic: 1_000,
   pro: 5_000,
   business: 30_000,
+};
+
+const PLAN_DISPLAY_NAMES: Record<string, string> = {
+  free: "Free",
+  free_plus: "Free+",
+  basic: "Basic",
+  pro: "Pro",
+  business: "Business",
 };
 
 function useCountdownToNextHour() {
@@ -117,6 +126,25 @@ function HourlyQuotaBar({
   );
 }
 
+function FreePlusUpgradeBanner({ onUpgrade, loading }: { onUpgrade: () => void; loading: boolean }) {
+  return (
+    <div className="border border-primary/30 rounded-lg p-4 bg-primary/5 mb-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-medium">Unlock more free lookups</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Add a card on file (no charge) to upgrade to Free+ with 100 lookups/month,
+            50 requests/hour, and 25 domains per request.
+          </p>
+        </div>
+        <Button onClick={onUpgrade} disabled={loading} className="ml-4 shrink-0">
+          {loading ? "Setting up..." : "Add Card"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function UsageDashboard() {
   const auth = useAuth();
   const { signRequest } = useZudoku();
@@ -124,6 +152,7 @@ export function UsageDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
+  const [cardLoading, setCardLoading] = useState(false);
 
   const fetchUsage = useCallback(async () => {
     try {
@@ -171,6 +200,31 @@ export function UsageDashboard() {
     }
   }, [signRequest]);
 
+  const handleSetupCard = useCallback(async () => {
+    setCardLoading(true);
+    try {
+      const req = new Request(API_BASE + "/api/billing/setup-card", {
+        method: "POST",
+      });
+      const signed = await signRequest(req);
+      const res = await fetch(signed);
+      const json = await res.json();
+
+      if (json.client_secret) {
+        // Store the client secret and redirect to card setup page
+        // In production, this would open a Stripe Elements modal or redirect
+        // For now, we'll use Stripe Checkout in setup mode
+        // The frontend Stripe integration will handle the client_secret
+        sessionStorage.setItem("setup_intent_secret", json.client_secret);
+        window.location.href = "/settings/add-card";
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setCardLoading(false);
+    }
+  }, [signRequest]);
+
   if (!auth.isAuthenticated) {
     return (
       <div className="max-w-3xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
@@ -211,6 +265,11 @@ export function UsageDashboard() {
   if (!data) return null;
 
   const { plan, usage, has_subscription: hasSub } = data;
+  const planKey = plan.name.toLowerCase();
+  const isFreeTier = planKey === "free" || planKey === "free_plus";
+  const isBasicFree = planKey === "free"; // eligible for Free+ upgrade
+  const displayName = PLAN_DISPLAY_NAMES[planKey] ?? plan.name;
+
   const isOverLimit = usage.total_lookups_this_month > plan.lookups_limit;
   const displayUsed = isOverLimit ? plan.lookups_limit : usage.total_lookups_this_month;
   const displayRemaining = isOverLimit ? 0 : usage.lookups_remaining;
@@ -239,14 +298,20 @@ export function UsageDashboard() {
         </div>
       </div>
 
-      {!hasSub && (
-        <div className="border border-yellow-800 rounded-lg p-4 bg-yellow-950 mb-6">
-          <p className="text-yellow-400">
-            No active subscription.{" "}
-            <a href="/pricing" className="underline font-medium">
-              Choose a plan
+      {/* Free+ upgrade banner — only for users on basic Free plan */}
+      {isBasicFree && (
+        <FreePlusUpgradeBanner onUpgrade={handleSetupCard} loading={cardLoading} />
+      )}
+
+      {/* Upgrade CTA for free tier users */}
+      {isFreeTier && !isBasicFree && (
+        <div className="border border-primary/20 rounded-lg p-4 bg-primary/5 mb-6">
+          <p className="text-sm text-muted-foreground">
+            You're on the Free+ plan.{" "}
+            <a href="/pricing" className="text-primary underline font-medium">
+              Upgrade to Basic
             </a>{" "}
-            to start making API lookups.
+            for 10,000 lookups/month and 100 domains per request.
           </p>
         </div>
       )}
@@ -258,10 +323,10 @@ export function UsageDashboard() {
             <p className="text-sm text-muted-foreground uppercase tracking-wide">
               Current Plan
             </p>
-            <p className="text-xl font-semibold capitalize mt-1">
-              {plan.name}
+            <p className="text-xl font-semibold mt-1">
+              {displayName}
               <a href="/pricing" className="text-sm text-primary font-normal ml-3 hover:underline">
-                Change plan
+                {isFreeTier ? "Upgrade" : "Change plan"}
               </a>
             </p>
           </div>

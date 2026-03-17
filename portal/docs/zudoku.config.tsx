@@ -1,11 +1,52 @@
 import type { ZudokuConfig, ZudokuPlugin } from "zudoku";
 import { PricingPage } from "./src/PricingPage.js";
 import { UsageDashboard } from "./src/UsageDashboard.js";
-import { API_BASE } from "./src/config.js";
+import { CardSetupPage } from "./src/CardSetupPage.js";
+import { API_BASE, TURNSTILE_SITE_KEY } from "./src/config.js";
 
 const overrideCssPlugin: ZudokuPlugin = {
-  getHead: () => <link rel="stylesheet" href="/overrides.css" />,
+  getHead: () => (
+    <>
+      <link rel="stylesheet" href="/overrides.css" />
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer />
+    </>
+  ),
 };
+
+/**
+ * Execute Turnstile invisibly and return a token.
+ * Falls back gracefully if Turnstile hasn't loaded yet.
+ */
+async function getTurnstileToken(): Promise<string> {
+  const turnstile = (window as any).turnstile;
+  if (!turnstile) return "";
+
+  return new Promise<string>((resolve) => {
+    // Create a hidden container for the invisible widget
+    const container = document.createElement("div");
+    container.style.display = "none";
+    document.body.appendChild(container);
+
+    turnstile.render(container, {
+      sitekey: TURNSTILE_SITE_KEY,
+      callback: (token: string) => {
+        resolve(token);
+        // Clean up
+        try { turnstile.remove(container); } catch {}
+        container.remove();
+      },
+      "error-callback": () => {
+        resolve("");
+        container.remove();
+      },
+      "expired-callback": () => {
+        resolve("");
+        container.remove();
+      },
+      size: "invisible",
+    });
+  });
+}
 
 /** Developer Portal Configuration */
 const config: ZudokuConfig = {
@@ -85,6 +126,12 @@ const config: ZudokuConfig = {
     },
     {
       type: "custom-page",
+      path: "/settings/add-card",
+      element: <CardSetupPage />,
+      display: "auth",
+    },
+    {
+      type: "custom-page",
       path: "/pricing",
       label: "Plans & Pricing",
       element: <PricingPage />,
@@ -140,13 +187,21 @@ const config: ZudokuConfig = {
       }));
     },
     createKey: async ({ apiKey, context }: any) => {
+      const turnstileToken = await getTurnstileToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (turnstileToken) {
+        headers["x-turnstile-token"] = turnstileToken;
+      }
       const req = new Request(`${API_BASE}/api/keys`, {
         method: "POST",
         body: JSON.stringify({ description: apiKey.description || "API Key" }),
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
       const res = await fetch(await context.signRequest(req));
-      if (!res.ok) throw new Error("Could not create API Key");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Could not create API Key");
+      }
     },
     rollKey: async (consumerId: string, context: any) => {
       const req = new Request(`${API_BASE}/api/keys/${consumerId}/rotate`, { method: "POST" });

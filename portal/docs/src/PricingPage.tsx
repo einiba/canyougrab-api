@@ -54,6 +54,14 @@ export function PricingPage() {
         return;
       }
 
+      // Free plan — just sign up / create key, no Stripe needed
+      if (plan === "free") {
+        // User is already on free by default after signup
+        // Redirect to API keys page to create their first key
+        window.location.href = "/settings/api-keys";
+        return;
+      }
+
       setLoadingPlan(plan);
       try {
         const req = new Request(API_BASE + "/api/billing/checkout", {
@@ -100,7 +108,7 @@ export function PricingPage() {
     <div className="max-w-5xl pt-(--padding-content-top) pb-(--padding-content-bottom)">
       <h1 className="font-medium text-2xl pb-2">Plans & Pricing</h1>
       <p className="text-muted-foreground mb-6">
-        Choose the plan that fits your lookup volume.
+        Start free. Upgrade when you need more lookups.
       </p>
 
       {checkoutStatus === "success" && (
@@ -124,6 +132,10 @@ export function PricingPage() {
         onSelectPlan={handleSelectPlan}
         loadingPlan={loadingPlan}
       />
+
+      <p className="text-center text-sm text-muted-foreground mt-6">
+        All plans include real zone file data from ICANN, updated daily across 800+ TLDs.
+      </p>
 
       {hasSub && (
         <div className="mt-8 text-center">

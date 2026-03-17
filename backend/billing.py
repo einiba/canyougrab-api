@@ -25,10 +25,15 @@ STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
 
 PLAN_PRICE_MAP = {
-    'starter': {'priceId': 'price_1TAggjH8ksFkvmqRKVBO4YhN', 'limit': 100},
-    'basic':   {'priceId': 'price_1TAggjH8ksFkvmqRNEE6UHx3', 'limit': 10_000},
-    'pro':     {'priceId': 'price_1TAggkH8ksFkvmqRUx9kVWf9', 'limit': 50_000},
-    'business':{'priceId': 'price_1TAggkH8ksFkvmqRn7c63MZE', 'limit': 300_000},
+    'basic':   {'priceId': os.environ.get('STRIPE_PRICE_BASIC',   'price_1TAggjH8ksFkvmqRNEE6UHx3'), 'limit': 10_000},
+    'pro':     {'priceId': os.environ.get('STRIPE_PRICE_PRO',     'price_1TAggkH8ksFkvmqRUx9kVWf9'), 'limit': 50_000},
+    'business':{'priceId': os.environ.get('STRIPE_PRICE_BUSINESS','price_1TAggkH8ksFkvmqRn7c63MZE'), 'limit': 300_000},
+}
+
+# Free tiers don't have Stripe prices — they're managed internally
+FREE_PLAN_LIMITS = {
+    'free': 25,
+    'free_plus': 100,
 }
 
 PRICE_TO_PLAN = {}
@@ -36,6 +41,7 @@ for name, info in PLAN_PRICE_MAP.items():
     PRICE_TO_PLAN[info['priceId']] = {'name': name, 'limit': info['limit']}
 
 PLAN_LIMITS = {name: info['limit'] for name, info in PLAN_PRICE_MAP.items()}
+PLAN_LIMITS.update(FREE_PLAN_LIMITS)
 
 billing_router = APIRouter(prefix='/api/billing', tags=['Billing'])
 stripe_router = APIRouter(prefix='/api/stripe', tags=['Stripe'])
@@ -196,6 +202,103 @@ def create_portal(user: JWTUser = Depends(jwt_auth)):
     return {'url': session.get('url', '')}
 
 
+# ── Card on file (Free+ upgrade via SetupIntent) ──────────────────
+
+@billing_router.post('/setup-card')
+def setup_card(user: JWTUser = Depends(jwt_auth)):
+    """Create a Stripe SetupIntent to collect a card for Free+ tier.
+    The card is validated but not charged. Returns client_secret for Stripe Elements."""
+    customer_id = _find_or_create_customer(user.sub, user.email)
+
+    setup_intent = _stripe_request('POST', 'setup_intents', {
+        'customer': customer_id,
+        'usage': 'off_session',
+        'metadata': {'auth0_sub': user.sub, 'purpose': 'free_plus_upgrade'},
+    })
+
+    return {
+        'client_secret': setup_intent.get('client_secret', ''),
+        'setup_intent_id': setup_intent.get('id', ''),
+    }
+
+
+@billing_router.post('/confirm-free-plus')
+def confirm_free_plus(user: JWTUser = Depends(jwt_auth)):
+    """After SetupIntent succeeds, verify card fingerprint and upgrade to Free+.
+    Enforces one Free+ account per card fingerprint."""
+    customer_id = _find_or_create_customer(user.sub, user.email)
+
+    # Get the customer's payment methods to find the card fingerprint
+    pms = _stripe_request('GET', f'payment_methods?customer={customer_id}&type=card&limit=1')
+    pm_data = pms.get('data', [])
+    if not pm_data:
+        raise HTTPException(status_code=400, detail='No card found. Please add a card first.')
+
+    card = pm_data[0].get('card', {})
+    fingerprint = card.get('fingerprint', '')
+    if not fingerprint:
+        raise HTTPException(status_code=400, detail='Unable to verify card. Please try a different card.')
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # Check if this card fingerprint is already used for a free account
+            cur.execute("""
+                SELECT user_sub FROM card_fingerprints
+                WHERE stripe_fingerprint = %s AND user_sub != %s
+            """, (fingerprint, user.sub))
+            existing = cur.fetchone()
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail='This card is already associated with another free account. '
+                           'Each card can only be used for one free account.'
+                )
+
+            # Store the card fingerprint
+            cur.execute("""
+                INSERT INTO card_fingerprints (user_sub, stripe_fingerprint)
+                VALUES (%s, %s)
+                ON CONFLICT (user_sub, stripe_fingerprint) DO NOTHING
+            """, (user.sub, fingerprint))
+
+            # Upgrade all active keys from free to free_plus
+            cur.execute("""
+                UPDATE api_keys
+                SET plan = 'free_plus', lookups_limit = %s
+                WHERE user_sub = %s AND revoked_at IS NULL AND plan = 'free'
+            """, (FREE_PLAN_LIMITS['free_plus'], user.sub))
+            upgraded = cur.rowcount
+            conn.commit()
+
+        logger.info('User %s upgraded to free_plus (card fp: %s..., %d keys updated)',
+                     user.sub[:20], fingerprint[:8], upgraded)
+    finally:
+        conn.close()
+
+    return {
+        'plan': 'free_plus',
+        'lookups_limit': FREE_PLAN_LIMITS['free_plus'],
+        'keys_upgraded': upgraded,
+    }
+
+
+@billing_router.get('/card-status')
+def card_status(user: JWTUser = Depends(jwt_auth)):
+    """Check if the user has a card on file."""
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) FROM card_fingerprints WHERE user_sub = %s
+            """, (user.sub,))
+            has_card = cur.fetchone()[0] > 0
+    finally:
+        conn.close()
+
+    return {'has_card': has_card}
+
+
 # ── Stripe webhook ─────────────────────────────────────────────────
 
 @stripe_router.post('/webhook')
@@ -249,7 +352,18 @@ async def stripe_webhook(request: Request):
         subscription = event['data']['object']
         auth0_sub = subscription.get('metadata', {}).get('auth0_sub')
         if auth0_sub:
-            _update_user_plan(auth0_sub, 'none', 0)
+            # Downgrade to free_plus if they have a card on file, otherwise free
+            conn = get_db_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM card_fingerprints WHERE user_sub = %s", (auth0_sub,))
+                    has_card = cur.fetchone()[0] > 0
+            finally:
+                conn.close()
+            if has_card:
+                _update_user_plan(auth0_sub, 'free_plus', FREE_PLAN_LIMITS['free_plus'])
+            else:
+                _update_user_plan(auth0_sub, 'free', FREE_PLAN_LIMITS['free'])
 
     return {'received': True}
 
@@ -276,8 +390,8 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
 
     if not user_keys:
         # No keys — check Stripe for subscription as fallback
-        plan_name = 'none'
-        plan_limit = 0
+        plan_name = 'free'
+        plan_limit = FREE_PLAN_LIMITS['free']
         has_sub = False
         try:
             customer_id = _find_or_create_customer(user.sub, user.email)
@@ -290,6 +404,19 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
                     has_sub = True
         except Exception as e:
             logger.warning('Stripe fallback lookup failed: %s', e)
+
+        # Check card on file for free_plus
+        if plan_name == 'free':
+            try:
+                conn2 = get_db_conn()
+                with conn2.cursor() as cur2:
+                    cur2.execute("SELECT COUNT(*) FROM card_fingerprints WHERE user_sub = %s", (user.sub,))
+                    if cur2.fetchone()[0] > 0:
+                        plan_name = 'free_plus'
+                        plan_limit = FREE_PLAN_LIMITS['free_plus']
+                conn2.close()
+            except Exception:
+                pass
 
         return {
             'plan': {'name': plan_name, 'lookups_limit': plan_limit, 'period': 'monthly'},
@@ -305,7 +432,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     # Get plan from first key
     plan_name = user_keys[0][3]
     plan_limit = user_keys[0][4]
-    has_sub = plan_name != 'none'
+    has_sub = plan_name not in ('none', 'free', 'free_plus')
 
     # Get usage for all consumer IDs
     consumer_ids = [str(k[0]) for k in user_keys]

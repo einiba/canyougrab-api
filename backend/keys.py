@@ -6,14 +6,20 @@ Mounted as a FastAPI router at /api/keys.
 import hashlib
 import secrets
 import logging
+import os
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 from auth import JWTUser, jwt_auth
 from queries import get_db_conn
+from email_utils import validate_signup_email, normalize_email
+
+TURNSTILE_SECRET = os.environ.get('TURNSTILE_SECRET_KEY', '')
+TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/keys', tags=['API Keys'])
@@ -41,11 +47,33 @@ class RotateKeyResponse(BaseModel):
 
 
 @router.post('')
-def create_key(body: CreateKeyRequest, user: JWTUser = Depends(jwt_auth)):
+def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends(jwt_auth)):
     """Create a new API key for the authenticated user."""
+    # Verify Turnstile token if configured
+    turnstile_token = request.headers.get('x-turnstile-token', '')
+    if TURNSTILE_SECRET and turnstile_token:
+        client_ip = request.headers.get(
+            'x-forwarded-for', request.client.host if request.client else ''
+        ).split(',')[0].strip()
+        resp = httpx.post(TURNSTILE_VERIFY_URL, data={
+            'secret': TURNSTILE_SECRET,
+            'response': turnstile_token,
+            'remoteip': client_ip,
+        }, timeout=10)
+        result = resp.json()
+        if not result.get('success'):
+            logger.warning('Turnstile verification failed on key creation: %s', result.get('error-codes', []))
+            raise HTTPException(status_code=403, detail='Bot verification failed. Please try again.')
+
+    # Validate email (disposable check + normalization)
+    email_check = validate_signup_email(user.email)
+    if not email_check['valid']:
+        raise HTTPException(status_code=400, detail=email_check['reason'])
+
+    normalized_email = email_check['normalized']
     raw, key_hash, prefix = _generate_key()
 
-    # Look up user's current plan from their other keys or default to 'none'
+    # Look up user's current plan from their other keys or default to 'free'
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
@@ -55,14 +83,14 @@ def create_key(body: CreateKeyRequest, user: JWTUser = Depends(jwt_auth)):
                 ORDER BY created_at DESC LIMIT 1
             """, (user.sub,))
             existing = cur.fetchone()
-            plan = existing[0] if existing else 'none'
-            lookups_limit = existing[1] if existing else 0
+            plan = existing[0] if existing else 'free'
+            lookups_limit = existing[1] if existing else 25
 
             cur.execute("""
-                INSERT INTO api_keys (user_sub, email, description, key_hash, key_prefix, plan, lookups_limit)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan, lookups_limit)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at
-            """, (user.sub, user.email, body.description, key_hash, prefix, plan, lookups_limit))
+            """, (user.sub, user.email, normalized_email, body.description, key_hash, prefix, plan, lookups_limit))
             row = cur.fetchone()
             conn.commit()
     finally:
@@ -136,12 +164,13 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
             """, (key_id,))
 
             # Create new key with same settings
+            normalized_email = normalize_email(user.email)
             raw, key_hash, prefix = _generate_key()
             cur.execute("""
-                INSERT INTO api_keys (user_sub, email, description, key_hash, key_prefix, plan, lookups_limit)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan, lookups_limit)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at
-            """, (user.sub, user.email, description, key_hash, prefix, plan, lookups_limit))
+            """, (user.sub, user.email, normalized_email, description, key_hash, prefix, plan, lookups_limit))
             new_row = cur.fetchone()
             conn.commit()
     finally:

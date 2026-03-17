@@ -8,7 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Body, Depends, HTTPException, Query
+from fastapi import FastAPI, Body, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -21,22 +21,33 @@ from queries import (
 from valkey_client import create_job, get_job_status, get_job_results, get_valkey
 from keys import router as keys_router
 from billing import billing_router, stripe_router
+from antifraud import antifraud_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
 PLAN_MONTHLY_LIMITS = {
-    'starter': 100,
+    'free': 25,
+    'free_plus': 100,
     'basic': 10_000,
     'pro': 50_000,
     'business': 300_000,
 }
 
 PLAN_HOURLY_LIMITS = {
-    'starter': 100,
+    'free': 15,
+    'free_plus': 50,
     'basic': 1_000,
     'pro': 5_000,
     'business': 30_000,
+}
+
+PLAN_DOMAIN_CAPS = {
+    'free': 5,
+    'free_plus': 25,
+    'basic': 100,
+    'pro': 100,
+    'business': 100,
 }
 
 app = FastAPI(title='CanYouGrab API', version='7.0.0')
@@ -52,6 +63,7 @@ app.add_middleware(
 app.include_router(keys_router)
 app.include_router(billing_router)
 app.include_router(stripe_router)
+app.include_router(antifraud_router)
 
 
 # ── Rate limiting via Valkey ───────────────────────────────────────
@@ -82,6 +94,40 @@ def _check_rate_limit(consumer_id: str, plan: str):
         )
 
 
+# ── IP-based rate limiting ────────────────────────────────────────
+
+IP_HOURLY_LIMIT = 200   # max lookups per IP per hour (across all accounts)
+IP_DAILY_LIMIT = 1_000  # max lookups per IP per day
+
+def _check_ip_rate_limit(ip: str):
+    """Check IP-level rate limits to prevent multi-account abuse."""
+    r = get_valkey()
+    hour_key = datetime.now(timezone.utc).strftime('%Y%m%d%H')
+    day_key = datetime.now(timezone.utc).strftime('%Y%m%d')
+
+    # Hourly IP limit
+    ip_hour_key = f'iplimit:h:{ip}:{hour_key}'
+    count_h = r.incr(ip_hour_key)
+    if count_h == 1:
+        r.expire(ip_hour_key, 3600)
+    if count_h > IP_HOURLY_LIMIT:
+        raise HTTPException(status_code=429, detail={
+            'error': 'IP hourly rate limit exceeded',
+            'message': 'Too many requests from this IP address. Please try again later.',
+        })
+
+    # Daily IP limit
+    ip_day_key = f'iplimit:d:{ip}:{day_key}'
+    count_d = r.incr(ip_day_key)
+    if count_d == 1:
+        r.expire(ip_day_key, 86400)
+    if count_d > IP_DAILY_LIMIT:
+        raise HTTPException(status_code=429, detail={
+            'error': 'IP daily rate limit exceeded',
+            'message': 'Too many requests from this IP address today. Please try again tomorrow.',
+        })
+
+
 # ── Bulk domain check (long-poll) ─────────────────────────────────
 
 POLL_INTERVAL = 0.3   # seconds between Valkey polls
@@ -90,6 +136,7 @@ POLL_TIMEOUT = 45.0   # max seconds to wait for results (increased for WHOIS loo
 
 @app.post('/api/check/bulk')
 async def api_check_bulk(
+    request: Request,
     body: dict = Body(...),
     user: APIKeyUser = Depends(api_key_auth),
     verbose: bool = Query(False, description='Include internal timing and debug fields'),
@@ -98,13 +145,24 @@ async def api_check_bulk(
     domains = body.get('domains', [])
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'error': 'Provide a domains array'}, status_code=400)
-    if len(domains) > 100:
-        return JSONResponse({'error': 'Maximum 100 domains per request'}, status_code=400)
 
     consumer = user.consumer_id
     plan = user.plan
 
+    # Per-plan domain cap
+    domain_cap = PLAN_DOMAIN_CAPS.get(plan, 100)
+    if len(domains) > domain_cap:
+        return JSONResponse({
+            'error': f'Maximum {domain_cap} domains per request on your {plan} plan',
+            'limit': domain_cap,
+        }, status_code=400)
+
     _check_rate_limit(consumer, plan)
+
+    # IP-based rate limiting (anti-abuse)
+    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip()
+    if client_ip:
+        _check_ip_rate_limit(client_ip)
 
     # Monthly quota check
     monthly_limit = PLAN_MONTHLY_LIMITS.get(plan, 0)

@@ -54,15 +54,19 @@ Domain availability lookup API with subscription billing, built on FastAPI + DNS
 
 ```
 zuplo/
-├── backend/                    # Python FastAPI backend (~1500 LOC)
+├── backend/                    # Python FastAPI backend
 │   ├── app.py                  # Main API: /check/bulk, /usage, /health
 │   ├── auth.py                 # API key auth (SHA-256) + Auth0 JWT auth (RS256)
-│   ├── billing.py              # Stripe checkout, portal, webhooks, usage details
-│   ├── keys.py                 # API key CRUD: create, list, rotate, revoke
+│   ├── billing.py              # Stripe checkout, portal, webhooks, card-on-file, usage details
+│   ├── keys.py                 # API key CRUD: create, list, rotate, revoke (+ Turnstile)
+│   ├── antifraud.py            # Anti-fraud: Turnstile, device fingerprints, risk scoring
+│   ├── email_utils.py          # Email normalization + disposable email detection
 │   ├── dns_client.py           # DNS-based domain availability checking via Unbound
 │   ├── queries.py              # PostgreSQL queries: usage tracking, auth, billing
 │   ├── valkey_client.py        # Redis/Valkey job queue client
 │   ├── worker.py               # Background job processor (ThreadPoolExecutor)
+│   ├── migrations/             # SQL migrations
+│   │   └── 001_free_tier_antifraud.sql
 │   └── requirements.txt        # Python dependencies
 ├── portal/                     # Developer portal (Zuplo + Zudoku)
 │   ├── config/
@@ -70,10 +74,11 @@ zuplo/
 │   │   └── policies.json       # Zuplo policies (empty — all routing is direct)
 │   ├── docs/                   # Zudoku documentation portal
 │   │   ├── src/
-│   │   │   ├── config.ts       # API_BASE URL constant
+│   │   │   ├── config.ts       # API_BASE, Turnstile site key, Stripe PK
 │   │   │   ├── UsageDashboard.tsx   # Usage + billing dashboard component
 │   │   │   ├── PricingPage.tsx      # Plan selection + Stripe checkout
-│   │   │   └── PricingPlans.tsx     # Pricing card grid component
+│   │   │   ├── PricingPlans.tsx     # Pricing card grid component
+│   │   │   └── CardSetupPage.tsx    # Stripe Elements card-on-file for Free+
 │   │   ├── public/             # Static assets (logos, banners, CSS overrides)
 │   │   ├── zudoku.config.tsx   # Portal config: theme, nav, Auth0, API key mgmt
 │   │   └── package.json        # Frontend dependencies (React 19, Zudoku)
@@ -108,7 +113,14 @@ zuplo/
 | `DELETE` | `/api/keys/{id}` | Revoke (soft-delete) a key. |
 | `POST` | `/api/billing/checkout` | Create Stripe Checkout session. |
 | `POST` | `/api/billing/portal` | Create Stripe Customer Portal session. |
+| `POST` | `/api/billing/setup-card` | Create SetupIntent for Free+ card-on-file. |
+| `POST` | `/api/billing/confirm-free-plus` | Verify card fingerprint and upgrade to Free+. |
+| `GET` | `/api/billing/card-status` | Check if user has a card on file. |
 | `GET` | `/api/billing/usage/detailed` | Per-key usage breakdown for portal dashboard. |
+| `POST` | `/api/antifraud/turnstile/verify` | Verify Cloudflare Turnstile token. |
+| `POST` | `/api/antifraud/device/register` | Register device fingerprint (Fingerprint Pro). |
+| `GET` | `/api/antifraud/risk` | Get risk assessment for authenticated user. |
+| `POST` | `/api/antifraud/assess-signup` | Run multi-signal risk assessment at signup. |
 
 ### Internal / Webhook
 
@@ -165,12 +177,13 @@ User → Pricing Page → Select Plan → Auth0 login
 
 ## Subscription Plans
 
-| Plan | Monthly Lookups | Hourly Rate Limit | Price |
-|------|----------------|-------------------|-------|
-| Starter | 100 | 100/hr | $1/mo |
-| Basic | 10,000 | 1,000/hr | $10/mo |
-| Pro | 50,000 | 5,000/hr | $20/mo |
-| Business | 300,000 | 30,000/hr | $30/mo |
+| Plan | Monthly Lookups | Hourly Rate Limit | Domains/Request | Price |
+|------|----------------|-------------------|-----------------|-------|
+| Free | 25 | 15/hr | 5 | $0 |
+| Free+ | 100 | 50/hr | 25 | $0 (card on file) |
+| Basic | 10,000 | 1,000/hr | 100 | $10/mo |
+| Pro | 50,000 | 5,000/hr | 100 | $20/mo |
+| Business | 300,000 | 30,000/hr | 100 | $30/mo |
 
 ## Authentication
 
@@ -211,9 +224,12 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `api_keys` | User API keys | `id`, `user_sub`, `key_hash`, `key_prefix`, `plan`, `lookups_limit`, `revoked_at` |
+| `api_keys` | User API keys | `id`, `user_sub`, `email_normalized`, `key_hash`, `key_prefix`, `plan`, `lookups_limit`, `revoked_at` |
 | `usage_log` | Daily usage aggregates | `consumer`, `lookups`, `recorded_at` (DATE, unique per consumer+day) |
 | `hourly_usage_log` | Hourly usage aggregates | `consumer`, `lookups`, `hour_start` (TIMESTAMP, unique per consumer+hour) |
+| `card_fingerprints` | One free account per card | `user_sub`, `stripe_fingerprint` (unique pair) |
+| `device_fingerprints` | Device-based multi-account detection | `user_sub`, `visitor_id` (Fingerprint Pro) |
+| `account_risk` | Composite risk scoring | `user_sub` (unique), `risk_score`, `risk_signals` (JSONB) |
 
 ### Valkey (Redis) Data Structures
 
@@ -239,7 +255,7 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 | Service | Purpose |
 |---------|---------|
 | **DigitalOcean** | Droplets (API servers, Unbound resolver), Managed PostgreSQL, Managed Valkey |
-| **Cloudflare** | DNS, CDN, SSL for canyougrab.it zone |
+| **Cloudflare** | DNS, CDN, SSL for canyougrab.it zone, Turnstile bot prevention |
 | **Auth0** | User authentication, social login (Google + Apple), JWT issuance |
 | **Stripe** | Subscription billing, checkout, customer portal, webhooks |
 | **GitHub Actions** | CI/CD deployment pipelines |
@@ -316,8 +332,14 @@ AUTH0_DOMAIN=dev-mqe5tavp6dr62e7u.us.auth0.com
 AUTH0_AUDIENCE=https://api.canyougrab.it
 
 # Stripe
-STRIPE_SECRET_KEY=     # sk_live_... or sk_test_...
-STRIPE_WEBHOOK_SECRET= # whsec_...
+STRIPE_SECRET_KEY=     # sk_live_... (prod) or sk_test_... (dev)
+STRIPE_WEBHOOK_SECRET= # whsec_... (per-environment)
+STRIPE_PRICE_BASIC=    # price_... (live price ID for Basic plan)
+STRIPE_PRICE_PRO=      # price_... (live price ID for Pro plan)
+STRIPE_PRICE_BUSINESS= # price_... (live price ID for Business plan)
+
+# Cloudflare Turnstile (bot prevention on key creation)
+TURNSTILE_SECRET_KEY=  # 0x4AAAA... (from Cloudflare dashboard)
 
 # Portal
 PORTAL_URL=https://portal.canyougrab.it
