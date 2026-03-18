@@ -1,11 +1,3 @@
-window.chatwootSettings = {
-  position: "right",
-  type: "expanded_bubble",
-  launcherTitle: "Support",
-  darkMode: "auto",
-  showPopoutButton: true,
-};
-
 (function (d, t) {
   var hostname = window.location.hostname;
   var isDev =
@@ -31,6 +23,10 @@ window.chatwootSettings = {
 })(document, "script");
 
 window.addEventListener("chatwoot:ready", function () {
+  // Dark mode to match portal theme
+  window.$chatwoot.setColorScheme("dark");
+
+  // Pass authenticated user identity from Auth0
   try {
     var keys = Object.keys(localStorage);
     for (var i = 0; i < keys.length; i++) {
