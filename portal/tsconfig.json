@@ -1,19 +1,21 @@
 {
-  "include": ["modules/**/*", "tests/**/*"],
-  "exclude": ["./node_modules", "./dist"],
   "compilerOptions": {
-    "module": "ESNext",
     "target": "ES2022",
-    "lib": ["ESNext", "WebWorker", "Webworker.Iterable"],
-    "preserveConstEnums": true,
-    "moduleResolution": "Bundler",
-    "useUnknownInCatchVariables": false,
-    "forceConsistentCasingInFileNames": true,
-    "importHelpers": true,
-    "removeComments": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
     "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
     "noEmit": true,
-    "strictNullChecks": true,
-    "experimentalDecorators": true
-  }
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["../shared/*"]
+    }
+  },
+  "include": ["src", "../shared"]
 }
