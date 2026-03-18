@@ -67,11 +67,13 @@ def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends
             raise HTTPException(status_code=403, detail='Bot verification failed. Please try again.')
 
     # Validate email (disposable check + normalization)
-    email_check = validate_signup_email(user.email)
-    if not email_check['valid']:
-        raise HTTPException(status_code=400, detail=email_check['reason'])
-
-    normalized_email = email_check['normalized']
+    # Email may be empty if Auth0 access token doesn't include it yet
+    normalized_email = ''
+    if user.email:
+        email_check = validate_signup_email(user.email)
+        if not email_check['valid']:
+            raise HTTPException(status_code=400, detail=email_check['reason'])
+        normalized_email = email_check['normalized']
     raw, key_hash, prefix = _generate_key()
 
     # Look up user's current plan from their other keys or default to 'free'
