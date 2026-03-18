@@ -179,10 +179,6 @@ export function PricingPage() {
         freePlusLoading={freePlusLoading}
       />
 
-      <p className="text-center text-sm text-muted-foreground mt-6">
-        All plans include real zone file data from ICANN, updated daily across 800+ TLDs.
-      </p>
-
       {hasSub && (
         <div className="mt-8 text-center">
           <Button
