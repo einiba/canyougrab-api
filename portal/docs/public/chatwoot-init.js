@@ -25,32 +25,29 @@
 // Track identification state
 var _cwIdentified = false;
 
-function _cwGetAuth0User() {
+function _cwGetAuthUser() {
   try {
-    var keys = Object.keys(localStorage);
-    for (var i = 0; i < keys.length; i++) {
-      if (keys[i].indexOf("@@auth0spajs@@") !== -1) {
-        var data = JSON.parse(localStorage.getItem(keys[i]));
-        var user =
-          data &&
-          data.body &&
-          data.body.decodedToken &&
-          data.body.decodedToken.user;
-        if (user && user.email) return user;
-      }
-    }
+    var raw = localStorage.getItem("auth-state");
+    if (!raw) return null;
+    var data = JSON.parse(raw);
+    var profile =
+      data &&
+      data.state &&
+      data.state.isAuthenticated &&
+      data.state.profile;
+    if (profile && profile.email) return profile;
   } catch (e) {}
   return null;
 }
 
 function _cwIdentifyUser() {
   if (_cwIdentified || !window.$chatwoot) return false;
-  var user = _cwGetAuth0User();
+  var user = _cwGetAuthUser();
   if (!user) return false;
   window.$chatwoot.setUser(user.sub, {
     email: user.email,
-    name: user.name || user.nickname,
-    avatar_url: user.picture,
+    name: user.name,
+    avatar_url: user.pictureUrl,
   });
   _cwIdentified = true;
   return true;
