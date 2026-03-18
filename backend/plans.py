@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 
 from queries import get_db_conn
 
@@ -18,7 +19,8 @@ def _load_plans() -> dict:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT name, display_name, price_cents, monthly_limit,
-                       minute_limit, domain_cap, requires_card, stripe_price_id, sort_order
+                       minute_limit, domain_cap, requires_card, stripe_price_id, sort_order,
+                       published_at, retired_at
                 FROM plans ORDER BY sort_order
             """)
             rows = cur.fetchall()
@@ -37,6 +39,8 @@ def _load_plans() -> dict:
             'requires_card': r[6],
             'stripe_price_id': r[7],
             'sort_order': r[8],
+            'published_at': r[9].isoformat() if r[9] else None,
+            'retired_at': r[10].isoformat() if r[10] else None,
         }
     return plans
 
@@ -49,6 +53,28 @@ def get_plans() -> dict:
         _plans_cache = _load_plans()
         _cache_time = now
     return _plans_cache
+
+
+def _is_published(plan: dict) -> bool:
+    """Check if a plan is currently published and not retired."""
+    now = datetime.now(timezone.utc)
+    pub = plan.get('published_at')
+    ret = plan.get('retired_at')
+    if not pub:
+        return False
+    pub_dt = datetime.fromisoformat(pub) if isinstance(pub, str) else pub
+    if pub_dt > now:
+        return False
+    if ret:
+        ret_dt = datetime.fromisoformat(ret) if isinstance(ret, str) else ret
+        if ret_dt <= now:
+            return False
+    return True
+
+
+def get_published_plans() -> list[dict]:
+    """Get plans that are currently published and not retired, sorted by sort_order."""
+    return [p for p in sorted(get_plans().values(), key=lambda x: x['sort_order']) if _is_published(p)]
 
 
 def get_plan(name: str) -> dict:

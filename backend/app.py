@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from auth import APIKeyUser, api_key_auth
-from plans import get_plan
+from plans import get_plan, get_published_plans
 from queries import (
     record_usage, get_usage,
     get_monthly_usage, get_monthly_detailed_usage,
@@ -244,6 +244,25 @@ def api_quota_check(user: APIKeyUser = Depends(api_key_auth)):
         'monthly_lookups': get_monthly_usage(user.consumer_id),
         'minute_lookups': get_minute_usage(user.consumer_id),
     }
+
+
+@app.get('/api/plans')
+def api_plans():
+    """Public endpoint: returns currently published plans."""
+    plans = get_published_plans()
+    return [
+        {
+            'name': p['name'],
+            'display_name': p['display_name'],
+            'price_cents': p['price_cents'],
+            'monthly_limit': p['monthly_limit'],
+            'minute_limit': p['minute_limit'],
+            'domain_cap': p['domain_cap'],
+            'requires_card': p['requires_card'],
+            'sort_order': p['sort_order'],
+        }
+        for p in plans
+    ]
 
 
 @app.get('/health')

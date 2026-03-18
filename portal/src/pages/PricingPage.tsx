@@ -2,7 +2,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/Button";
-import { PricingPlans } from "@/components/PricingPlans";
+import { PricingPlans, type ApiPlan } from "@/components/PricingPlans";
 import { API_BASE } from "@/config";
 
 export function PricingPage() {
@@ -13,6 +13,7 @@ export function PricingPage() {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [freePlusLoading, setFreePlusLoading] = useState(false);
+  const [apiPlans, setApiPlans] = useState<ApiPlan[] | undefined>(undefined);
   const [checkoutStatus, setCheckoutStatus] = useState<"success" | "cancel" | null>(null);
   const [cardSetupStatus, setCardSetupStatus] = useState<"success" | "cancel" | null>(null);
 
@@ -48,6 +49,13 @@ export function PricingPage() {
       // If we can't fetch plan, just show cards without highlighting
     }
   }, [signRequest]);
+
+  useEffect(() => {
+    fetch(API_BASE + "/api/plans")
+      .then((r) => r.json())
+      .then((data) => setApiPlans(data))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (auth.isAuthenticated) {
@@ -177,6 +185,7 @@ export function PricingPage() {
         onUpgradeFreePlus={handleUpgradeFreePlus}
         loadingPlan={loadingPlan}
         freePlusLoading={freePlusLoading}
+        apiPlans={apiPlans}
       />
 
       {hasSub && (

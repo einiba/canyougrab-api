@@ -1,12 +1,42 @@
 import { Button } from "@/components/Button";
 import { getActivePlans, getPer100Cost, type PlanDefinition } from "@shared/plans.config";
 
+export interface ApiPlan {
+  name: string;
+  display_name: string;
+  price_cents: number;
+  monthly_limit: number;
+  minute_limit: number;
+  domain_cap: number;
+  requires_card: boolean;
+  sort_order: number;
+}
+
+function apiPlanToDefinition(p: ApiPlan): PlanDefinition {
+  const monthlyPrice = p.price_cents / 100;
+  return {
+    id: p.name,
+    name: p.display_name,
+    monthlyPrice,
+    monthlyLimit: p.monthly_limit,
+    minuteLimit: p.minute_limit,
+    domainCap: p.domain_cap,
+    features: [],
+    isActive: true,
+    isFree: monthlyPrice === 0,
+    requiresCard: p.requires_card,
+    displayOrder: p.sort_order,
+    stripe: { test: null, live: null },
+  };
+}
+
 interface PricingPlansProps {
   currentPlan?: string;
   onSelectPlan?: (plan: string) => void;
   onUpgradeFreePlus?: () => void;
   loadingPlan?: string | null;
   freePlusLoading?: boolean;
+  apiPlans?: ApiPlan[];
 }
 
 export function PricingPlans({
@@ -15,9 +45,12 @@ export function PricingPlans({
   onUpgradeFreePlus,
   loadingPlan,
   freePlusLoading,
+  apiPlans,
 }: PricingPlansProps) {
   const normalizedCurrent = currentPlan?.toLowerCase();
-  const plans = getActivePlans();
+  const plans = apiPlans
+    ? apiPlans.map(apiPlanToDefinition)
+    : getActivePlans();
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
