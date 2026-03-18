@@ -5,6 +5,7 @@ const PLANS = [
     name: "Free",
     key: "free",
     price: 0,
+    priceLabel: "Free",
     lookups: 50,
     per100: "—",
     rateLimit: 25,
@@ -12,9 +13,21 @@ const PLANS = [
     cta: "Get Started Free",
   },
   {
+    name: "Free+",
+    key: "free_plus",
+    price: 0,
+    priceLabel: "Free",
+    subtitle: "Card on file",
+    lookups: 200,
+    per100: "—",
+    rateLimit: 50,
+    domainCap: 50,
+  },
+  {
     name: "Basic",
     key: "basic",
     price: 10,
+    priceLabel: "$10",
     lookups: 10_000,
     per100: "0.10",
     rateLimit: 1_000,
@@ -25,6 +38,7 @@ const PLANS = [
     name: "Pro",
     key: "pro",
     price: 20,
+    priceLabel: "$20",
     lookups: 50_000,
     per100: "0.04",
     rateLimit: 5_000,
@@ -34,6 +48,7 @@ const PLANS = [
     name: "Business",
     key: "business",
     price: 30,
+    priceLabel: "$30",
     lookups: 300_000,
     per100: "0.01",
     rateLimit: 30_000,
@@ -56,20 +71,14 @@ export function PricingPlans({
   loadingPlan,
   freePlusLoading,
 }: PricingPlansProps) {
-  // Normalize: both "free" and "free_plus" highlight the Free column
   const normalizedCurrent = currentPlan?.toLowerCase();
-  const isOnFreeTier =
-    normalizedCurrent === "free" || normalizedCurrent === "free_plus";
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
       {PLANS.map((plan) => {
-        const isCurrent =
-          plan.key === "free"
-            ? isOnFreeTier
-            : normalizedCurrent === plan.key;
-        const isLoading =
-          loadingPlan?.toLowerCase() === plan.key;
+        const isCurrent = normalizedCurrent === plan.key;
+        const isLoading = loadingPlan?.toLowerCase() === plan.key;
+        const isFreePlus = plan.key === "free_plus";
 
         return (
           <div
@@ -91,8 +100,14 @@ export function PricingPlans({
             </p>
 
             <p className="text-3xl font-bold mt-3">
-              {plan.price === 0 ? "Free" : `$${plan.price}`}
+              {plan.priceLabel}
             </p>
+
+            {plan.subtitle && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {plan.subtitle}
+              </p>
+            )}
 
             {plan.per100 !== "—" && (
               <p className="text-sm mt-4">
@@ -109,28 +124,6 @@ export function PricingPlans({
               {plan.domainCap} domains / request
             </p>
 
-            {plan.key === "free" && normalizedCurrent !== "free_plus" && onUpgradeFreePlus && (
-              <div className="mt-4 w-full border border-primary/30 rounded-md p-3 bg-primary/5">
-                <p className="text-xs font-medium text-primary mb-1">
-                  Unlock higher limits — free
-                </p>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Add a card on file to verify your account. You won't be charged.
-                </p>
-                <Button
-                  className="w-full text-xs h-7"
-                  variant="outline"
-                  disabled={freePlusLoading}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    onUpgradeFreePlus();
-                  }}
-                >
-                  {freePlusLoading ? "Setting up..." : "Unlock Free+ (200 lookups/mo)"}
-                </Button>
-              </div>
-            )}
-
             <div className="mt-auto pt-5 w-full">
               {isCurrent ? (
                 <Button
@@ -138,9 +131,16 @@ export function PricingPlans({
                   className="w-full border-primary text-primary cursor-default pointer-events-none"
                   disabled
                 >
-                  {normalizedCurrent === "free_plus"
-                    ? "Current Plan (Free+)"
-                    : "Current Plan"}
+                  Current Plan
+                </Button>
+              ) : isFreePlus && onUpgradeFreePlus ? (
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={freePlusLoading}
+                  onClick={() => onUpgradeFreePlus()}
+                >
+                  {freePlusLoading ? "Setting up..." : "Unlock Free+"}
                 </Button>
               ) : (
                 <Button
