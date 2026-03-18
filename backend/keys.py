@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from auth import JWTUser, jwt_auth
+from plans import get_plan
 from queries import get_db_conn
 from email_utils import validate_signup_email, normalize_email
 
@@ -78,19 +79,18 @@ def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT plan, lookups_limit FROM api_keys
+                SELECT plan FROM api_keys
                 WHERE user_sub = %s AND revoked_at IS NULL
                 ORDER BY created_at DESC LIMIT 1
             """, (user.sub,))
             existing = cur.fetchone()
             plan = existing[0] if existing else 'free'
-            lookups_limit = existing[1] if existing else 25
 
             cur.execute("""
-                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan, lookups_limit)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at
-            """, (user.sub, user.email, normalized_email, body.description, key_hash, prefix, plan, lookups_limit))
+            """, (user.sub, user.email, normalized_email, body.description, key_hash, prefix, plan))
             row = cur.fetchone()
             conn.commit()
     finally:
@@ -102,7 +102,7 @@ def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends
         'key_prefix': prefix,
         'description': body.description,
         'plan': plan,
-        'lookups_limit': lookups_limit,
+        'lookups_limit': get_plan(plan)['monthly_limit'],
         'created_at': row[1].isoformat() if row[1] else None,
     }
 
@@ -114,7 +114,7 @@ def list_keys(user: JWTUser = Depends(jwt_auth)):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, key_prefix, description, plan, lookups_limit, created_at, revoked_at
+                SELECT id, key_prefix, description, plan, created_at, revoked_at
                 FROM api_keys
                 WHERE user_sub = %s
                 ORDER BY created_at DESC
@@ -129,10 +129,10 @@ def list_keys(user: JWTUser = Depends(jwt_auth)):
             'key_prefix': r[1],
             'description': r[2],
             'plan': r[3],
-            'lookups_limit': r[4],
-            'created_at': r[5].isoformat() if r[5] else None,
-            'revoked_at': r[6].isoformat() if r[6] else None,
-            'active': r[6] is None,
+            'lookups_limit': get_plan(r[3])['monthly_limit'],
+            'created_at': r[4].isoformat() if r[4] else None,
+            'revoked_at': r[5].isoformat() if r[5] else None,
+            'active': r[5] is None,
         }
         for r in rows
     ]
@@ -146,7 +146,7 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
         with conn.cursor() as cur:
             # Verify ownership and get current settings
             cur.execute("""
-                SELECT id, description, plan, lookups_limit
+                SELECT id, description, plan
                 FROM api_keys
                 WHERE id = %s AND user_sub = %s AND revoked_at IS NULL
             """, (key_id, user.sub))
@@ -156,7 +156,6 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
 
             description = old[1]
             plan = old[2]
-            lookups_limit = old[3]
 
             # Revoke old key
             cur.execute("""
@@ -167,10 +166,10 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
             normalized_email = normalize_email(user.email)
             raw, key_hash, prefix = _generate_key()
             cur.execute("""
-                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan, lookups_limit)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at
-            """, (user.sub, user.email, normalized_email, description, key_hash, prefix, plan, lookups_limit))
+            """, (user.sub, user.email, normalized_email, description, key_hash, prefix, plan))
             new_row = cur.fetchone()
             conn.commit()
     finally:
@@ -182,7 +181,7 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
         'key_prefix': prefix,
         'description': description,
         'plan': plan,
-        'lookups_limit': lookups_limit,
+        'lookups_limit': get_plan(plan)['monthly_limit'],
         'created_at': new_row[1].isoformat() if new_row[1] else None,
         'old_key_id': key_id,
         'old_key_revoked': True,

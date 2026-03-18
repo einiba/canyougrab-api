@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from auth import JWTUser, jwt_auth
+from plans import get_plan, get_plan_by_stripe_price, get_plans
 from queries import get_db_conn
 
 logger = logging.getLogger(__name__)
@@ -23,25 +24,6 @@ logger = logging.getLogger(__name__)
 STRIPE_API = 'https://api.stripe.com/v1'
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
-
-PLAN_PRICE_MAP = {
-    'basic':   {'priceId': os.environ.get('STRIPE_PRICE_BASIC',   'price_1TAggjH8ksFkvmqRNEE6UHx3'), 'limit': 10_000},
-    'pro':     {'priceId': os.environ.get('STRIPE_PRICE_PRO',     'price_1TAggkH8ksFkvmqRUx9kVWf9'), 'limit': 50_000},
-    'business':{'priceId': os.environ.get('STRIPE_PRICE_BUSINESS','price_1TAggkH8ksFkvmqRn7c63MZE'), 'limit': 300_000},
-}
-
-# Free tiers don't have Stripe prices — they're managed internally
-FREE_PLAN_LIMITS = {
-    'free': 500,
-    'free_plus': 10_000,
-}
-
-PRICE_TO_PLAN = {}
-for name, info in PLAN_PRICE_MAP.items():
-    PRICE_TO_PLAN[info['priceId']] = {'name': name, 'limit': info['limit']}
-
-PLAN_LIMITS = {name: info['limit'] for name, info in PLAN_PRICE_MAP.items()}
-PLAN_LIMITS.update(FREE_PLAN_LIMITS)
 
 billing_router = APIRouter(prefix='/api/billing', tags=['Billing'])
 stripe_router = APIRouter(prefix='/api/stripe', tags=['Stripe'])
@@ -110,20 +92,19 @@ def _get_active_subscription(customer_id: str) -> Optional[dict]:
     return data[0] if data else None
 
 
-def _update_user_plan(user_sub: str, plan_name: str, lookups_limit: int):
+def _update_user_plan(user_sub: str, plan_name: str):
     """Update plan on all active API keys for a user."""
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE api_keys
-                SET plan = %s, lookups_limit = %s
+                UPDATE api_keys SET plan = %s
                 WHERE user_sub = %s AND revoked_at IS NULL
-            """, (plan_name, lookups_limit, user_sub))
+            """, (plan_name, user_sub))
             updated = cur.rowcount
             conn.commit()
-        logger.info('Updated %d keys for user %s to plan=%s limit=%d',
-                     updated, user_sub[:20], plan_name, lookups_limit)
+        logger.info('Updated %d keys for user %s to plan=%s',
+                     updated, user_sub[:20], plan_name)
     finally:
         conn.close()
 
@@ -169,10 +150,12 @@ class CheckoutRequest(BaseModel):
 def create_checkout(body: CheckoutRequest, user: JWTUser = Depends(jwt_auth)):
     """Create a Stripe Checkout session for subscribing to a plan."""
     plan = body.plan
-    if plan not in PLAN_PRICE_MAP:
-        raise HTTPException(status_code=400, detail=f'Invalid plan: {plan}. Valid: {list(PLAN_PRICE_MAP.keys())}')
+    plan_info = get_plan(plan)
+    if not plan_info.get('stripe_price_id'):
+        paid_plans = [n for n, p in get_plans().items() if p.get('stripe_price_id')]
+        raise HTTPException(status_code=400, detail=f'Invalid plan: {plan}. Valid: {paid_plans}')
 
-    price_id = PLAN_PRICE_MAP[plan]['priceId']
+    price_id = plan_info['stripe_price_id']
     customer_id = _find_or_create_customer(user.sub, user.email)
 
     session = _stripe_request('POST', 'checkout/sessions', {
@@ -258,10 +241,9 @@ def _handle_free_plus_upgrade(auth0_sub: str, customer_id: str):
 
             # Upgrade all active keys from free to free_plus
             cur.execute("""
-                UPDATE api_keys
-                SET plan = 'free_plus', lookups_limit = %s
+                UPDATE api_keys SET plan = 'free_plus'
                 WHERE user_sub = %s AND revoked_at IS NULL AND plan = 'free'
-            """, (FREE_PLAN_LIMITS['free_plus'], auth0_sub))
+            """, (auth0_sub,))
             upgraded = cur.rowcount
             conn.commit()
 
@@ -313,10 +295,9 @@ def confirm_free_plus(user: JWTUser = Depends(jwt_auth)):
 
             # Upgrade all active keys from free to free_plus
             cur.execute("""
-                UPDATE api_keys
-                SET plan = 'free_plus', lookups_limit = %s
+                UPDATE api_keys SET plan = 'free_plus'
                 WHERE user_sub = %s AND revoked_at IS NULL AND plan = 'free'
-            """, (FREE_PLAN_LIMITS['free_plus'], user.sub))
+            """, (user.sub,))
             upgraded = cur.rowcount
             conn.commit()
 
@@ -325,9 +306,10 @@ def confirm_free_plus(user: JWTUser = Depends(jwt_auth)):
     finally:
         conn.close()
 
+    free_plus = get_plan('free_plus')
     return {
         'plan': 'free_plus',
-        'lookups_limit': FREE_PLAN_LIMITS['free_plus'],
+        'lookups_limit': free_plus['monthly_limit'],
         'keys_upgraded': upgraded,
     }
 
@@ -393,18 +375,20 @@ async def stripe_webhook(request: Request):
                 or session.get('metadata', {}).get('auth0_sub')
             )
 
-            if auth0_sub and price_id and price_id in PRICE_TO_PLAN:
-                plan_info = PRICE_TO_PLAN[price_id]
-                _update_user_plan(auth0_sub, plan_info['name'], plan_info['limit'])
+            if auth0_sub and price_id:
+                plan_info = get_plan_by_stripe_price(price_id)
+                if plan_info:
+                    _update_user_plan(auth0_sub, plan_info['name'])
 
     elif event_type == 'customer.subscription.updated':
         subscription = event['data']['object']
         auth0_sub = subscription.get('metadata', {}).get('auth0_sub')
         price_id = subscription.get('items', {}).get('data', [{}])[0].get('price', {}).get('id')
 
-        if auth0_sub and price_id and price_id in PRICE_TO_PLAN:
-            plan_info = PRICE_TO_PLAN[price_id]
-            _update_user_plan(auth0_sub, plan_info['name'], plan_info['limit'])
+        if auth0_sub and price_id:
+            plan_info = get_plan_by_stripe_price(price_id)
+            if plan_info:
+                _update_user_plan(auth0_sub, plan_info['name'])
 
     elif event_type == 'customer.subscription.deleted':
         subscription = event['data']['object']
@@ -419,9 +403,9 @@ async def stripe_webhook(request: Request):
             finally:
                 conn.close()
             if has_card:
-                _update_user_plan(auth0_sub, 'free_plus', FREE_PLAN_LIMITS['free_plus'])
+                _update_user_plan(auth0_sub, 'free_plus')
             else:
-                _update_user_plan(auth0_sub, 'free', FREE_PLAN_LIMITS['free'])
+                _update_user_plan(auth0_sub, 'free')
 
     return {'received': True}
 
@@ -437,7 +421,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, key_prefix, description, plan, lookups_limit, created_at
+                SELECT id, key_prefix, description, plan, created_at
                 FROM api_keys
                 WHERE user_sub = %s AND revoked_at IS NULL
                 ORDER BY created_at
@@ -449,16 +433,15 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     if not user_keys:
         # No keys — check Stripe for subscription as fallback
         plan_name = 'free'
-        plan_limit = FREE_PLAN_LIMITS['free']
         has_sub = False
         try:
             customer_id = _find_or_create_customer(user.sub, user.email)
             active_sub = _get_active_subscription(customer_id)
             if active_sub:
                 price_id = active_sub.get('items', {}).get('data', [{}])[0].get('price', {}).get('id')
-                if price_id and price_id in PRICE_TO_PLAN:
-                    plan_name = PRICE_TO_PLAN[price_id]['name']
-                    plan_limit = PRICE_TO_PLAN[price_id]['limit']
+                matched = get_plan_by_stripe_price(price_id) if price_id else None
+                if matched:
+                    plan_name = matched['name']
                     has_sub = True
         except Exception as e:
             logger.warning('Stripe fallback lookup failed: %s', e)
@@ -471,11 +454,11 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
                     cur2.execute("SELECT COUNT(*) FROM card_fingerprints WHERE user_sub = %s", (user.sub,))
                     if cur2.fetchone()[0] > 0:
                         plan_name = 'free_plus'
-                        plan_limit = FREE_PLAN_LIMITS['free_plus']
                 conn2.close()
             except Exception:
                 pass
 
+        plan_limit = get_plan(plan_name)['monthly_limit']
         return {
             'plan': {'name': plan_name, 'lookups_limit': plan_limit, 'period': 'monthly'},
             'has_subscription': has_sub,
@@ -489,7 +472,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
 
     # Get plan from first key
     plan_name = user_keys[0][3]
-    plan_limit = user_keys[0][4]
+    plan_limit = get_plan(plan_name)['monthly_limit']
     has_sub = plan_name not in ('none', 'free', 'free_plus')
 
     # Get usage for all consumer IDs
@@ -505,7 +488,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
             'description': k[2] or 'API Key',
             'lookups_this_month': monthly['by_consumer'].get(kid, 0),
             'lookups_this_minute': minute['by_consumer'].get(kid, 0),
-            'created_at': k[5].isoformat() if k[5] else None,
+            'created_at': k[4].isoformat() if k[4] else None,
         })
 
     total_monthly = sum(bk['lookups_this_month'] for bk in by_key)

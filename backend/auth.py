@@ -73,13 +73,12 @@ def _find_rsa_key(token: str) -> Optional[dict]:
 
 class APIKeyUser:
     """Represents an authenticated API key consumer."""
-    __slots__ = ('consumer_id', 'user_sub', 'plan', 'lookups_limit', 'email')
+    __slots__ = ('consumer_id', 'user_sub', 'plan', 'email')
 
-    def __init__(self, consumer_id: str, user_sub: str, plan: str, lookups_limit: int, email: str = ''):
+    def __init__(self, consumer_id: str, user_sub: str, plan: str, email: str = ''):
         self.consumer_id = consumer_id
         self.user_sub = user_sub
         self.plan = plan
-        self.lookups_limit = lookups_limit
         self.email = email
 
 
@@ -99,7 +98,7 @@ def api_key_auth(request: Request) -> APIKeyUser:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, user_sub, plan, lookups_limit, email
+                SELECT id, user_sub, plan, email
                 FROM api_keys
                 WHERE key_hash = %s AND revoked_at IS NULL
             """, (key_hash,))
@@ -114,8 +113,7 @@ def api_key_auth(request: Request) -> APIKeyUser:
         consumer_id=str(row[0]),
         user_sub=row[1],
         plan=row[2],
-        lookups_limit=row[3],
-        email=row[4] or '',
+        email=row[3] or '',
     )
 
 

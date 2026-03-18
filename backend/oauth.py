@@ -317,19 +317,17 @@ def _get_or_create_api_key(user_sub: str, email: str) -> str | None:
 
             # Get user's current plan
             plan = "free"
-            lookups_limit = 50
             if existing:
-                cur.execute("SELECT plan, lookups_limit FROM api_keys WHERE id = %s", (existing[0],))
+                cur.execute("SELECT plan FROM api_keys WHERE id = %s", (existing[0],))
                 plan_row = cur.fetchone()
                 if plan_row:
                     plan = plan_row[0]
-                    lookups_limit = plan_row[1]
 
             cur.execute("""
-                INSERT INTO api_keys (user_sub, email, description, key_hash, key_prefix, plan, lookups_limit)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO api_keys (user_sub, email, description, key_hash, key_prefix, plan)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (user_sub, email, "Claude MCP", key_hash, prefix, plan, lookups_limit))
+            """, (user_sub, email, "Claude MCP", key_hash, prefix, plan))
             conn.commit()
 
             return raw

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from auth import APIKeyUser, api_key_auth
+from plans import get_plan
 from queries import (
     record_usage, get_usage,
     get_monthly_usage, get_monthly_detailed_usage,
@@ -26,30 +27,6 @@ from oauth import router as oauth_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
-
-PLAN_MONTHLY_LIMITS = {
-    'free': 500,
-    'free_plus': 10_000,
-    'basic': 20_000,
-    'pro': 50_000,
-    'business': 300_000,
-}
-
-PLAN_MINUTE_LIMITS = {
-    'free': 30,
-    'free_plus': 100,
-    'basic': 300,
-    'pro': 1_000,
-    'business': 3_000,
-}
-
-PLAN_DOMAIN_CAPS = {
-    'free': 30,
-    'free_plus': 100,
-    'basic': 100,
-    'pro': 100,
-    'business': 100,
-}
 
 app = FastAPI(title='CanYouGrab API', version='7.0.0')
 
@@ -72,7 +49,7 @@ app.include_router(oauth_router)
 
 def _check_rate_limit(consumer_id: str, plan: str):
     """Check per-minute rate limit using Valkey counter."""
-    limit = PLAN_MINUTE_LIMITS.get(plan, 0)
+    limit = get_plan(plan)['minute_limit']
     if limit <= 0:
         return
 
@@ -150,9 +127,10 @@ async def api_check_bulk(
 
     consumer = user.consumer_id
     plan = user.plan
+    plan_info = get_plan(plan)
 
     # Per-plan domain cap
-    domain_cap = PLAN_DOMAIN_CAPS.get(plan, 100)
+    domain_cap = plan_info['domain_cap']
     if len(domains) > domain_cap:
         return JSONResponse({
             'error': f'Maximum {domain_cap} domains per request on your {plan} plan',
@@ -167,7 +145,7 @@ async def api_check_bulk(
         _check_ip_rate_limit(client_ip)
 
     # Monthly quota check
-    monthly_limit = PLAN_MONTHLY_LIMITS.get(plan, 0)
+    monthly_limit = plan_info['monthly_limit']
     if monthly_limit > 0:
         monthly_used = get_monthly_usage(consumer)
         if monthly_used >= monthly_limit:
@@ -178,7 +156,7 @@ async def api_check_bulk(
             }, status_code=429)
 
     # Per-minute quota check
-    minute_limit = PLAN_MINUTE_LIMITS.get(plan, 0)
+    minute_limit = plan_info['minute_limit']
     if minute_limit > 0:
         minute_used = get_minute_usage(consumer)
         if minute_used >= minute_limit:
@@ -233,7 +211,14 @@ async def api_check_bulk(
 @app.get('/api/account/usage')
 def api_account_usage(user: APIKeyUser = Depends(api_key_auth)):
     """Returns usage data for the authenticated consumer."""
-    return get_usage(user.consumer_id)
+    plan_info = get_plan(user.plan)
+    usage = get_usage(user.consumer_id)
+    return {
+        'plan': user.plan,
+        'lookups_today': usage['lookups_today'],
+        'lookups_limit': plan_info['monthly_limit'],
+        'period': 'monthly',
+    }
 
 
 @app.post('/api/account/usage/detailed')
