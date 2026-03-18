@@ -12,7 +12,7 @@ for (const [id, plan] of Object.entries(PLANS)) {
     name: plan.name,
     monthlyPrice: plan.monthlyPrice,
     monthlyLimit: plan.monthlyLimit,
-    hourlyLimit: plan.hourlyLimit,
+    minuteLimit: plan.minuteLimit,
     domainCap: plan.domainCap,
     isActive: plan.isActive,
     isFree: plan.isFree,

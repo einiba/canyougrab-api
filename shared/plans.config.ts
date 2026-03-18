@@ -8,7 +8,7 @@ export interface PlanDefinition {
   name: string;
   monthlyPrice: number;
   monthlyLimit: number;
-  hourlyLimit: number;
+  minuteLimit: number;
   domainCap: number;
   features: string[];
   isActive: boolean;
@@ -30,11 +30,11 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Free",
     monthlyPrice: 0,
     monthlyLimit: 50,
-    hourlyLimit: 25,
+    minuteLimit: 30,
     domainCap: 25,
     features: [
       "50 lookups/month",
-      "25 requests/hour",
+      "30 requests/min",
       "25 domains/request",
       "Add a card to unlock 200 lookups/mo",
     ],
@@ -51,11 +51,11 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Free+",
     monthlyPrice: 0,
     monthlyLimit: 200,
-    hourlyLimit: 50,
+    minuteLimit: 100,
     domainCap: 50,
     features: [
       "200 lookups/month",
-      "50 requests/hour",
+      "100 requests/min",
       "50 domains/request",
       "Card on file required",
     ],
@@ -70,11 +70,11 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Basic",
     monthlyPrice: 10,
     monthlyLimit: 10_000,
-    hourlyLimit: 1_000,
+    minuteLimit: 300,
     domainCap: 100,
     features: [
       "10,000 lookups/month",
-      "1,000 requests/hour",
+      "300 requests/min",
       "100 domains/request",
       "Email support",
     ],
@@ -93,11 +93,11 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Pro",
     monthlyPrice: 20,
     monthlyLimit: 50_000,
-    hourlyLimit: 5_000,
+    minuteLimit: 1_000,
     domainCap: 100,
     features: [
       "50,000 lookups/month",
-      "5,000 requests/hour",
+      "1,000 requests/min",
       "100 domains/request",
       "Priority support",
     ],
@@ -115,11 +115,11 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Business",
     monthlyPrice: 30,
     monthlyLimit: 300_000,
-    hourlyLimit: 30_000,
+    minuteLimit: 3_000,
     domainCap: 100,
     features: [
       "300,000 lookups/month",
-      "30,000 requests/hour",
+      "3,000 requests/min",
       "100 domains/request",
       "Priority support",
     ],
@@ -138,7 +138,7 @@ export const PLANS: Record<string, PlanDefinition> = {
     name: "Starter",
     monthlyPrice: 1,
     monthlyLimit: 100,
-    hourlyLimit: 100,
+    minuteLimit: 10,
     domainCap: 100,
     features: [],
     isActive: false,

@@ -431,7 +431,7 @@ async def stripe_webhook(request: Request):
 @billing_router.get('/usage/detailed')
 def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     """Get detailed usage data for the portal dashboard."""
-    from queries import get_monthly_detailed_usage, get_hourly_detailed_usage
+    from queries import get_monthly_detailed_usage, get_minute_detailed_usage
 
     conn = get_db_conn()
     try:
@@ -481,7 +481,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
             'has_subscription': has_sub,
             'usage': {
                 'total_lookups_this_month': 0,
-                'total_lookups_this_hour': 0,
+                'total_lookups_this_minute': 0,
                 'lookups_remaining': plan_limit,
                 'by_key': [],
             },
@@ -495,7 +495,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     # Get usage for all consumer IDs
     consumer_ids = [str(k[0]) for k in user_keys]
     monthly = get_monthly_detailed_usage(consumer_ids)
-    hourly = get_hourly_detailed_usage(consumer_ids)
+    minute = get_minute_detailed_usage(consumer_ids)
 
     by_key = []
     for k in user_keys:
@@ -504,19 +504,19 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
             'consumer_id': kid,
             'description': k[2] or 'API Key',
             'lookups_this_month': monthly['by_consumer'].get(kid, 0),
-            'lookups_this_hour': hourly['by_consumer'].get(kid, 0),
+            'lookups_this_minute': minute['by_consumer'].get(kid, 0),
             'created_at': k[5].isoformat() if k[5] else None,
         })
 
     total_monthly = sum(bk['lookups_this_month'] for bk in by_key)
-    total_hourly = sum(bk['lookups_this_hour'] for bk in by_key)
+    total_minute = sum(bk['lookups_this_minute'] for bk in by_key)
 
     return {
         'plan': {'name': plan_name, 'lookups_limit': plan_limit, 'period': 'monthly'},
         'has_subscription': has_sub,
         'usage': {
             'total_lookups_this_month': total_monthly,
-            'total_lookups_this_hour': total_hourly,
+            'total_lookups_this_minute': total_minute,
             'lookups_remaining': max(0, plan_limit - total_monthly),
             'by_key': by_key,
         },

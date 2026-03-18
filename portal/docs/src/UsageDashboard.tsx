@@ -21,18 +21,18 @@ interface UsageData {
   has_subscription: boolean;
   usage: {
     total_lookups_this_month: number;
-    total_lookups_this_hour: number;
+    total_lookups_this_minute: number;
     lookups_remaining: number;
     by_key: KeyUsage[];
   };
 }
 
 const PLAN_RATE_LIMITS: Record<string, number> = {
-  free: 25,
-  free_plus: 50,
-  basic: 1_000,
-  pro: 5_000,
-  business: 30_000,
+  free: 30,
+  free_plus: 100,
+  basic: 300,
+  pro: 1_000,
+  business: 3_000,
 };
 
 const PLAN_DISPLAY_NAMES: Record<string, string> = {
@@ -43,23 +43,21 @@ const PLAN_DISPLAY_NAMES: Record<string, string> = {
   business: "Business",
 };
 
-function useCountdownToNextHour() {
+function useCountdownToNextMinute() {
   const [secondsLeft, setSecondsLeft] = useState(() => {
     const now = new Date();
-    return 3600 - now.getUTCMinutes() * 60 - now.getUTCSeconds();
+    return 60 - now.getUTCSeconds();
   });
 
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
-      setSecondsLeft(3600 - now.getUTCMinutes() * 60 - now.getUTCSeconds());
+      setSecondsLeft(60 - now.getUTCSeconds());
     }, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const minutes = Math.floor(secondsLeft / 60);
-  const seconds = secondsLeft % 60;
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  return `${secondsLeft}s`;
 }
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
@@ -81,25 +79,25 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function HourlyQuotaBar({
+function MinuteQuotaBar({
   planName,
-  hourlyUsage,
+  minuteUsage,
 }: {
   planName: string;
-  hourlyUsage: number;
+  minuteUsage: number;
 }) {
-  const countdown = useCountdownToNextHour();
+  const countdown = useCountdownToNextMinute();
   const limit = PLAN_RATE_LIMITS[planName.toLowerCase()] ?? 0;
 
   if (limit === 0) return null;
 
-  const displayUsed = Math.min(hourlyUsage, limit);
-  const hourlyPct = Math.min(100, Math.round((hourlyUsage / limit) * 100));
+  const displayUsed = Math.min(minuteUsage, limit);
+  const minutePct = Math.min(100, Math.round((minuteUsage / limit) * 100));
 
   return (
     <div className="mt-4 pt-4 border-t">
       <div className="flex justify-between items-start mb-2">
-        <p className="text-sm font-medium">Hourly Rate Limit</p>
+        <p className="text-sm font-medium">Per-Minute Rate Limit</p>
         <span className="text-sm text-muted-foreground">
           Resets in {countdown}
         </span>
@@ -109,15 +107,15 @@ function HourlyQuotaBar({
         <div className="flex justify-between text-sm mb-1">
           <span>
             {displayUsed.toLocaleString()} /{" "}
-            {limit.toLocaleString()} lookups this hour
+            {limit.toLocaleString()} lookups this minute
           </span>
-          <span className="text-muted-foreground">{hourlyPct}%</span>
+          <span className="text-muted-foreground">{minutePct}%</span>
         </div>
         <ProgressBar value={displayUsed} max={limit} />
       </div>
 
       <p className="text-xs text-muted-foreground mt-1">
-        Rate limits reset at the top of each UTC hour for all users.
+        Rate limits reset at the top of each UTC minute for all users.
         If you exceed your limit, API responses will include a{" "}
         <code className="text-xs bg-gray-800 px-1 rounded">429</code>{" "}
         status code.
@@ -134,7 +132,7 @@ function FreePlusUpgradeBanner({ onUpgrade, loading }: { onUpgrade: () => void; 
           <p className="font-medium">Unlock more free lookups</p>
           <p className="text-sm text-muted-foreground mt-1">
             Add a card on file (no charge) to upgrade to Free+ with 200 lookups/month,
-            50 requests/hour, and 50 domains per request.
+            100 requests/min, and 50 domains per request.
           </p>
         </div>
         <Button onClick={onUpgrade} disabled={loading} className="ml-4 shrink-0">
@@ -349,7 +347,7 @@ export function UsageDashboard() {
           month
         </p>
 
-        <HourlyQuotaBar planName={plan.name} hourlyUsage={usage.total_lookups_this_hour ?? 0} />
+        <MinuteQuotaBar planName={plan.name} minuteUsage={usage.total_lookups_this_minute ?? 0} />
       </div>
 
       {/* Per-key breakdown */}

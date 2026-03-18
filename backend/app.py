@@ -16,7 +16,7 @@ from auth import APIKeyUser, api_key_auth
 from queries import (
     record_usage, get_usage,
     get_monthly_usage, get_monthly_detailed_usage,
-    record_hourly_usage, get_hourly_usage, get_hourly_detailed_usage,
+    record_minute_usage, get_minute_usage, get_minute_detailed_usage,
 )
 from valkey_client import create_job, get_job_status, get_job_results, get_valkey
 from keys import router as keys_router
@@ -35,12 +35,12 @@ PLAN_MONTHLY_LIMITS = {
     'business': 300_000,
 }
 
-PLAN_HOURLY_LIMITS = {
-    'free': 25,
-    'free_plus': 50,
-    'basic': 1_000,
-    'pro': 5_000,
-    'business': 30_000,
+PLAN_MINUTE_LIMITS = {
+    'free': 30,
+    'free_plus': 100,
+    'basic': 300,
+    'pro': 1_000,
+    'business': 3_000,
 }
 
 PLAN_DOMAIN_CAPS = {
@@ -71,50 +71,50 @@ app.include_router(oauth_router)
 # ── Rate limiting via Valkey ───────────────────────────────────────
 
 def _check_rate_limit(consumer_id: str, plan: str):
-    """Check hourly rate limit using Valkey counter."""
-    limit = PLAN_HOURLY_LIMITS.get(plan, 0)
+    """Check per-minute rate limit using Valkey counter."""
+    limit = PLAN_MINUTE_LIMITS.get(plan, 0)
     if limit <= 0:
         return
 
-    hour_key = datetime.now(timezone.utc).strftime('%Y%m%d%H')
-    redis_key = f'ratelimit:{consumer_id}:{hour_key}'
+    minute_key = datetime.now(timezone.utc).strftime('%Y%m%d%H%M')
+    redis_key = f'ratelimit:{consumer_id}:{minute_key}'
 
     r = get_valkey()
     count = r.incr(redis_key)
     if count == 1:
-        r.expire(redis_key, 3600)
+        r.expire(redis_key, 60)
 
     if count > limit:
         now = datetime.now(timezone.utc)
         raise HTTPException(
             status_code=429,
             detail={
-                'error': 'Hourly rate limit exceeded',
-                'message': f'You have made {count:,} requests this hour. Your {plan} plan allows {limit:,} per hour.',
-                'retry_after_seconds': 3600 - now.minute * 60 - now.second,
+                'error': 'Per-minute rate limit exceeded',
+                'message': f'You have made {count:,} requests this minute. Your {plan} plan allows {limit:,} per minute.',
+                'retry_after_seconds': 60 - now.second,
             },
         )
 
 
 # ── IP-based rate limiting ────────────────────────────────────────
 
-IP_HOURLY_LIMIT = 200   # max lookups per IP per hour (across all accounts)
+IP_MINUTE_LIMIT = 20    # max lookups per IP per minute (across all accounts)
 IP_DAILY_LIMIT = 1_000  # max lookups per IP per day
 
 def _check_ip_rate_limit(ip: str):
     """Check IP-level rate limits to prevent multi-account abuse."""
     r = get_valkey()
-    hour_key = datetime.now(timezone.utc).strftime('%Y%m%d%H')
+    minute_key = datetime.now(timezone.utc).strftime('%Y%m%d%H%M')
     day_key = datetime.now(timezone.utc).strftime('%Y%m%d')
 
-    # Hourly IP limit
-    ip_hour_key = f'iplimit:h:{ip}:{hour_key}'
-    count_h = r.incr(ip_hour_key)
-    if count_h == 1:
-        r.expire(ip_hour_key, 3600)
-    if count_h > IP_HOURLY_LIMIT:
+    # Per-minute IP limit
+    ip_minute_key = f'iplimit:m:{ip}:{minute_key}'
+    count_m = r.incr(ip_minute_key)
+    if count_m == 1:
+        r.expire(ip_minute_key, 60)
+    if count_m > IP_MINUTE_LIMIT:
         raise HTTPException(status_code=429, detail={
-            'error': 'IP hourly rate limit exceeded',
+            'error': 'IP per-minute rate limit exceeded',
             'message': 'Too many requests from this IP address. Please try again later.',
         })
 
@@ -177,19 +177,19 @@ async def api_check_bulk(
                 'usage': {'monthly_lookups': monthly_used, 'monthly_limit': monthly_limit},
             }, status_code=429)
 
-    # Hourly quota check
-    hourly_limit = PLAN_HOURLY_LIMITS.get(plan, 0)
-    if hourly_limit > 0:
-        hourly_used = get_hourly_usage(consumer)
-        if hourly_used >= hourly_limit:
+    # Per-minute quota check
+    minute_limit = PLAN_MINUTE_LIMITS.get(plan, 0)
+    if minute_limit > 0:
+        minute_used = get_minute_usage(consumer)
+        if minute_used >= minute_limit:
             return JSONResponse({
-                'error': 'Hourly lookup limit exceeded',
-                'message': f'You have used {hourly_used:,} of your {hourly_limit:,} hourly domain lookups.',
-                'usage': {'hourly_lookups': hourly_used, 'hourly_limit': hourly_limit},
+                'error': 'Per-minute lookup limit exceeded',
+                'message': f'You have used {minute_used:,} of your {minute_limit:,} per-minute domain lookups.',
+                'usage': {'minute_lookups': minute_used, 'minute_limit': minute_limit},
             }, status_code=429)
 
     record_usage(consumer, len(domains))
-    record_hourly_usage(consumer, len(domains))
+    record_minute_usage(consumer, len(domains))
 
     # Enqueue job for worker processing
     job_id = str(uuid.uuid4())
@@ -243,9 +243,9 @@ def api_account_usage_detailed(body: dict = Body(...)):
     if not isinstance(consumers, list):
         return {'error': 'consumers must be a list'}
     monthly = get_monthly_detailed_usage(consumers)
-    hourly = get_hourly_detailed_usage(consumers)
-    monthly['hourly_by_consumer'] = hourly['by_consumer']
-    monthly['hourly_total'] = hourly['total']
+    minute = get_minute_detailed_usage(consumers)
+    monthly['minute_by_consumer'] = minute['by_consumer']
+    monthly['minute_total'] = minute['total']
     return monthly
 
 
@@ -255,7 +255,7 @@ def api_quota_check(user: APIKeyUser = Depends(api_key_auth)):
     return {
         'consumer': user.consumer_id,
         'monthly_lookups': get_monthly_usage(user.consumer_id),
-        'hourly_lookups': get_hourly_usage(user.consumer_id),
+        'minute_lookups': get_minute_usage(user.consumer_id),
     }
 
 

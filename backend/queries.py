@@ -142,70 +142,70 @@ def get_monthly_detailed_usage(consumers: list) -> dict:
         conn.close()
 
 
-def _ensure_hourly_usage_table(conn):
-    """Create the hourly usage tracking table if it does not exist."""
+def _ensure_minute_usage_table(conn):
+    """Create the per-minute usage tracking table if it does not exist."""
     with conn.cursor() as cur:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS hourly_usage_log (
+            CREATE TABLE IF NOT EXISTS minute_usage_log (
                 id SERIAL PRIMARY KEY,
                 consumer TEXT NOT NULL,
                 lookups INTEGER NOT NULL DEFAULT 0,
-                hour_start TIMESTAMP NOT NULL,
-                UNIQUE (consumer, hour_start)
+                minute_start TIMESTAMP NOT NULL,
+                UNIQUE (consumer, minute_start)
             )
         """)
         conn.commit()
 
 
-def record_hourly_usage(consumer: str, lookup_count: int):
-    """Record lookup usage for the current UTC hour."""
+def record_minute_usage(consumer: str, lookup_count: int):
+    """Record lookup usage for the current UTC minute."""
     conn = get_db_conn()
     try:
-        _ensure_hourly_usage_table(conn)
+        _ensure_minute_usage_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO hourly_usage_log (consumer, lookups, hour_start)
-                VALUES (%s, %s, DATE_TRUNC('hour', NOW()))
-                ON CONFLICT (consumer, hour_start)
-                DO UPDATE SET lookups = hourly_usage_log.lookups + EXCLUDED.lookups
+                INSERT INTO minute_usage_log (consumer, lookups, minute_start)
+                VALUES (%s, %s, DATE_TRUNC('minute', NOW()))
+                ON CONFLICT (consumer, minute_start)
+                DO UPDATE SET lookups = minute_usage_log.lookups + EXCLUDED.lookups
             """, (consumer, lookup_count))
             conn.commit()
     finally:
         conn.close()
 
 
-def get_hourly_usage(consumer: str) -> int:
-    """Get total lookups for a consumer in the current UTC hour."""
+def get_minute_usage(consumer: str) -> int:
+    """Get total lookups for a consumer in the current UTC minute."""
     conn = get_db_conn()
     try:
-        _ensure_hourly_usage_table(conn)
+        _ensure_minute_usage_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT COALESCE(SUM(lookups), 0)
-                FROM hourly_usage_log
+                FROM minute_usage_log
                 WHERE consumer = %s
-                  AND hour_start = DATE_TRUNC('hour', NOW())
+                  AND minute_start = DATE_TRUNC('minute', NOW())
             """, (consumer,))
             return cur.fetchone()[0]
     finally:
         conn.close()
 
 
-def get_hourly_detailed_usage(consumers: list) -> dict:
-    """Get hourly usage breakdown for multiple consumers."""
+def get_minute_detailed_usage(consumers: list) -> dict:
+    """Get per-minute usage breakdown for multiple consumers."""
     conn = get_db_conn()
     try:
-        _ensure_hourly_usage_table(conn)
+        _ensure_minute_usage_table(conn)
         by_consumer = {}
         total = 0
         if consumers:
             with conn.cursor() as cur:
                 placeholders = ",".join(["%s"] * len(consumers))
                 cur.execute(f"""
-                    SELECT consumer, COALESCE(SUM(lookups), 0) AS lookups_hour
-                    FROM hourly_usage_log
+                    SELECT consumer, COALESCE(SUM(lookups), 0) AS lookups_minute
+                    FROM minute_usage_log
                     WHERE consumer IN ({placeholders})
-                      AND hour_start = DATE_TRUNC('hour', NOW())
+                      AND minute_start = DATE_TRUNC('minute', NOW())
                     GROUP BY consumer
                 """, consumers)
                 for row in cur.fetchall():

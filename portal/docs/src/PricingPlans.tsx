@@ -8,7 +8,7 @@ const PLANS = [
     priceLabel: "Free",
     lookups: 50,
     per100: "—",
-    rateLimit: 25,
+    rateLimit: 30,
     domainCap: 25,
     cta: "Get Started Free",
   },
@@ -20,7 +20,7 @@ const PLANS = [
     subtitle: "Card on file",
     lookups: 200,
     per100: "—",
-    rateLimit: 50,
+    rateLimit: 100,
     domainCap: 50,
   },
   {
@@ -30,7 +30,7 @@ const PLANS = [
     priceLabel: "$10",
     lookups: 10_000,
     per100: "0.10",
-    rateLimit: 1_000,
+    rateLimit: 300,
     domainCap: 100,
     popular: true,
   },
@@ -41,7 +41,7 @@ const PLANS = [
     priceLabel: "$20",
     lookups: 50_000,
     per100: "0.04",
-    rateLimit: 5_000,
+    rateLimit: 1_000,
     domainCap: 100,
   },
   {
@@ -51,7 +51,7 @@ const PLANS = [
     priceLabel: "$30",
     lookups: 300_000,
     per100: "0.01",
-    rateLimit: 30_000,
+    rateLimit: 3_000,
     domainCap: 100,
   },
 ];
@@ -115,7 +115,7 @@ export function PricingPlans({
               </p>
             )}
             <p className={`text-sm ${plan.per100 === "—" ? "mt-4" : "mt-2"}`}>
-              {plan.rateLimit.toLocaleString()} requests / hour
+              {plan.rateLimit.toLocaleString()} requests / min
             </p>
             <p className="text-sm mt-2">
               {plan.lookups.toLocaleString()} lookups / month

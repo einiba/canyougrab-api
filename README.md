@@ -100,7 +100,7 @@ zuplo/
 |--------|------|-------------|
 | `POST` | `/api/check/bulk` | Check up to 100 domains. Long-polls until results ready (30s max). |
 | `GET` | `/api/account/usage` | Usage summary for the authenticated consumer. |
-| `GET` | `/api/account/quota-check` | Lightweight monthly + hourly quota check. |
+| `GET` | `/api/account/quota-check` | Lightweight monthly + per-minute quota check. |
 | `GET` | `/health` | Health check (no auth). |
 
 ### Portal API (Auth0 JWT auth)
@@ -140,7 +140,7 @@ Client                    FastAPI                     Valkey                    
   │  { domains: [...] }      │                          │                          │                    │
   │─────────────────────────▶│                          │                          │                    │
   │                          │── validate key ──────────│                          │                    │
-  │                          │── check hourly rate ────▶│ INCR ratelimit:id:hour  │                    │
+  │                          │── check minute rate ────▶│ INCR ratelimit:id:min   │                    │
   │                          │── check monthly quota ──▶│ (PostgreSQL)             │                    │
   │                          │── record usage ─────────▶│ (PostgreSQL)             │                    │
   │                          │── create_job() ─────────▶│ HSET job:{uuid}          │                    │
@@ -177,13 +177,13 @@ User → Pricing Page → Select Plan → Auth0 login
 
 ## Subscription Plans
 
-| Plan | Monthly Lookups | Hourly Rate Limit | Domains/Request | Price |
-|------|----------------|-------------------|-----------------|-------|
-| Free | 50 | 25/hr | 25 | $0 |
-| Free+ | 200 | 50/hr | 50 | $0 (card on file) |
-| Basic | 10,000 | 1,000/hr | 100 | $10/mo |
-| Pro | 50,000 | 5,000/hr | 100 | $20/mo |
-| Business | 300,000 | 30,000/hr | 100 | $30/mo |
+| Plan | Monthly Lookups | Per-Minute Rate Limit | Domains/Request | Price |
+|------|----------------|----------------------|-----------------|-------|
+| Free | 50 | 30/min | 25 | $0 |
+| Free+ | 200 | 100/min | 50 | $0 (card on file) |
+| Basic | 10,000 | 300/min | 100 | $10/mo |
+| Pro | 50,000 | 1,000/min | 100 | $20/mo |
+| Business | 300,000 | 3,000/min | 100 | $30/mo |
 
 ## Authentication
 
@@ -226,7 +226,7 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 |-------|---------|-------------|
 | `api_keys` | User API keys | `id`, `user_sub`, `email_normalized`, `key_hash`, `key_prefix`, `plan`, `lookups_limit`, `revoked_at` |
 | `usage_log` | Daily usage aggregates | `consumer`, `lookups`, `recorded_at` (DATE, unique per consumer+day) |
-| `hourly_usage_log` | Hourly usage aggregates | `consumer`, `lookups`, `hour_start` (TIMESTAMP, unique per consumer+hour) |
+| `minute_usage_log` | Per-minute usage aggregates | `consumer`, `lookups`, `minute_start` (TIMESTAMP, unique per consumer+minute) |
 | `card_fingerprints` | One free account per card | `user_sub`, `stripe_fingerprint` (unique pair) |
 | `device_fingerprints` | Device-based multi-account detection | `user_sub`, `visitor_id` (Fingerprint Pro) |
 | `account_risk` | Composite risk scoring | `user_sub` (unique), `risk_score`, `risk_signals` (JSONB) |
@@ -237,7 +237,7 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 |-------------|------|---------|-----|
 | `job:{uuid}` | Hash | Job status, domains, results | 1 hour |
 | `queue:jobs` | List | FIFO job queue (BRPOP by worker) | — |
-| `ratelimit:{consumer}:{YYYYMMDDHH}` | String | Hourly rate limit counter (INCR) | 1 hour |
+| `ratelimit:{consumer}:{YYYYMMDDHHmm}` | String | Per-minute rate limit counter (INCR) | 60s |
 
 ## Infrastructure
 
@@ -397,7 +397,7 @@ Portal dev server hardcodes `API_BASE` to `https://api.canyougrab.it` in `portal
 - **Long-polling**: The bulk check endpoint holds the HTTP connection open (polling Valkey every 0.3s, up to 30s) rather than requiring clients to implement polling.
 - **API keys with SHA-256 hashing**: Keys are hashed before storage (like passwords), so a database breach doesn't expose raw keys.
 - **Stripe metadata linking**: Stripe customers are linked to Auth0 users via `auth0_sub` metadata on the Stripe customer object, avoiding a separate mapping table.
-- **Usage double-tracking**: Both daily (`usage_log`) and hourly (`hourly_usage_log`) usage are recorded for monthly quota and hourly rate limiting respectively.
+- **Usage double-tracking**: Both daily (`usage_log`) and per-minute (`minute_usage_log`) usage are recorded for monthly quota and per-minute rate limiting respectively.
 - **No Zuplo gateway policies**: The project originally used Zuplo as an API gateway but migrated to direct FastAPI (commit `3abef70`). The Zuplo portal/docs framework is still used for the developer portal.
 
 ## Processes on Servers

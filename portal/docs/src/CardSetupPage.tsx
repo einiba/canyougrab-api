@@ -163,7 +163,7 @@ export function CardSetupPage() {
         <>
           <p className="text-muted-foreground mb-4">
             Add a card to unlock <strong>Free+</strong> — 100 lookups/month,
-            50 requests/hour, and 25 domains per request. Your card will be
+            100 requests/min, and 25 domains per request. Your card will be
             validated but <strong>not charged</strong>.
           </p>
 
@@ -205,8 +205,8 @@ export function CardSetupPage() {
             You're on Free+!
           </p>
           <p className="text-muted-foreground mb-4">
-            Your account has been upgraded to 100 lookups/month, 50
-            requests/hour, and 25 domains per request.
+            Your account has been upgraded to 100 lookups/month, 100
+            requests/min, and 25 domains per request.
           </p>
           <Button onClick={() => (window.location.href = "/usage")}>
             View Usage Dashboard
