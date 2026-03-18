@@ -7,6 +7,5 @@ node_modules/
 # OS Stuff
 .DS_Store
 
-# Ignore portal dist except for docs/dist (built static site for deploy)
-dist/
-!docs/dist/
+# Allow dist/ (built static site for deploy)
+!dist/

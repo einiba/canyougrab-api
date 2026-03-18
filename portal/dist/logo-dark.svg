@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 32" width="200" height="32">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600&amp;display=swap');
+    .logo-text { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 20px; }
+  </style>
+  <text y="23" class="logo-text">
+    <tspan fill="#e8eaed">canyougrab</tspan><tspan fill="#00d4aa">.it</tspan>
+  </text>
+</svg>
