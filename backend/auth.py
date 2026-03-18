@@ -119,13 +119,19 @@ def api_key_auth(request: Request) -> APIKeyUser:
 
 # ── JWT Auth (portal/dashboard) ───────────────────────────────────
 
+NS = 'https://api.canyougrab.it/'
+
+
 class JWTUser:
     """Represents an authenticated Auth0 JWT user."""
-    __slots__ = ('sub', 'email')
+    __slots__ = ('sub', 'email', 'name', 'email_verified')
 
-    def __init__(self, sub: str, email: str = ''):
+    def __init__(self, sub: str, email: str = '', name: str = '',
+                 email_verified: bool = False):
         self.sub = sub
         self.email = email
+        self.name = name
+        self.email_verified = email_verified
 
 
 def jwt_auth(request: Request) -> JWTUser:
@@ -157,5 +163,7 @@ def jwt_auth(request: Request) -> JWTUser:
 
     return JWTUser(
         sub=payload.get('sub', ''),
-        email=payload.get('email', payload.get('https://api.canyougrab.it/email', '')),
+        email=payload.get('email', payload.get(f'{NS}email', '')),
+        name=payload.get('name', payload.get(f'{NS}name', '')),
+        email_verified=payload.get('email_verified', payload.get(f'{NS}email_verified', False)),
     )

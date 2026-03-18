@@ -187,6 +187,20 @@ async def callback(request: Request):
     if not user_sub:
         return HTMLResponse("<h2>Authentication error</h2><p>Could not identify user.</p>", status_code=500)
 
+    # Upsert user record
+    try:
+        from users import upsert_user
+        auth_provider = user_sub.split('|')[0] if '|' in user_sub else ''
+        upsert_user(
+            auth0_sub=user_sub,
+            email=user_email,
+            name=userinfo.get('name', ''),
+            email_verified=userinfo.get('email_verified', False),
+            auth_provider=auth_provider,
+        )
+    except Exception as e:
+        logger.warning('Failed to upsert user during OAuth callback: %s', e)
+
     # Look up or create an API key for this user
     api_key = _get_or_create_api_key(user_sub, user_email)
     if not api_key:

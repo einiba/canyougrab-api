@@ -18,6 +18,7 @@ from auth import JWTUser, jwt_auth
 from plans import get_plan
 from queries import get_db_conn
 from email_utils import validate_signup_email, normalize_email
+from users import get_user_email
 
 TURNSTILE_SECRET = os.environ.get('TURNSTILE_SECRET_KEY', '')
 TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
@@ -66,11 +67,13 @@ def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends
             logger.warning('Turnstile verification failed on key creation: %s', result.get('error-codes', []))
             raise HTTPException(status_code=403, detail='Bot verification failed. Please try again.')
 
+    # Resolve email: prefer JWT claim, fall back to users table
+    email = user.email or get_user_email(user.sub)
+
     # Validate email (disposable check + normalization)
-    # Email may be empty if Auth0 access token doesn't include it yet
     normalized_email = ''
-    if user.email:
-        email_check = validate_signup_email(user.email)
+    if email:
+        email_check = validate_signup_email(email)
         if not email_check['valid']:
             raise HTTPException(status_code=400, detail=email_check['reason'])
         normalized_email = email_check['normalized']
@@ -92,7 +95,7 @@ def create_key(body: CreateKeyRequest, request: Request, user: JWTUser = Depends
                 INSERT INTO api_keys (user_sub, email, email_normalized, description, key_hash, key_prefix, plan)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at
-            """, (user.sub, user.email, normalized_email, body.description, key_hash, prefix, plan))
+            """, (user.sub, email, normalized_email, body.description, key_hash, prefix, plan))
             row = cur.fetchone()
             conn.commit()
     finally:

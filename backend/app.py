@@ -24,6 +24,7 @@ from keys import router as keys_router
 from billing import billing_router, stripe_router
 from antifraud import antifraud_router
 from oauth import router as oauth_router
+from session import router as session_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ app.include_router(billing_router)
 app.include_router(stripe_router)
 app.include_router(antifraud_router)
 app.include_router(oauth_router)
+app.include_router(session_router)
 
 
 # ── Rate limiting via Valkey ───────────────────────────────────────

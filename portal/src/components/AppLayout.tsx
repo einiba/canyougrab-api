@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
+import { useSession } from "@/hooks/useSession";
 import { Button } from "@/components/Button";
 
 const navLinks = [
@@ -12,6 +13,9 @@ const navLinks = [
 
 export function AppLayout() {
   const { isAuthenticated, isPending, profile, login, logout } = useAuth();
+
+  // Upsert user record on login
+  useSession();
 
   // Identify user to Chatwoot when authenticated
   useEffect(() => {
