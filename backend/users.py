@@ -7,6 +7,7 @@ from typing import Optional
 
 from email_utils import normalize_email
 from queries import get_db_conn
+from slack import notify_new_user
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,11 @@ def upsert_user(
 
         if not row:
             return None
+
+        # New user: created_at == updated_at (ON CONFLICT UPDATE didn't fire)
+        is_new = row[8] is not None and row[9] is not None and row[8] == row[9]
+        if is_new:
+            notify_new_user(email=row[2], name=row[5], auth_provider=row[7])
 
         return {
             'id': str(row[0]),
