@@ -32,8 +32,8 @@ PLAN_PRICE_MAP = {
 
 # Free tiers don't have Stripe prices — they're managed internally
 FREE_PLAN_LIMITS = {
-    'free': 25,
-    'free_plus': 100,
+    'free': 50,
+    'free_plus': 200,
 }
 
 PRICE_TO_PLAN = {}

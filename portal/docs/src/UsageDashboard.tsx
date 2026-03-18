@@ -28,7 +28,7 @@ interface UsageData {
 }
 
 const PLAN_RATE_LIMITS: Record<string, number> = {
-  free: 15,
+  free: 25,
   free_plus: 50,
   basic: 1_000,
   pro: 5_000,
@@ -133,8 +133,8 @@ function FreePlusUpgradeBanner({ onUpgrade, loading }: { onUpgrade: () => void; 
         <div>
           <p className="font-medium">Unlock more free lookups</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Add a card on file (no charge) to upgrade to Free+ with 100 lookups/month,
-            50 requests/hour, and 25 domains per request.
+            Add a card on file (no charge) to upgrade to Free+ with 200 lookups/month,
+            50 requests/hour, and 50 domains per request.
           </p>
         </div>
         <Button onClick={onUpgrade} disabled={loading} className="ml-4 shrink-0">

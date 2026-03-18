@@ -179,8 +179,8 @@ User → Pricing Page → Select Plan → Auth0 login
 
 | Plan | Monthly Lookups | Hourly Rate Limit | Domains/Request | Price |
 |------|----------------|-------------------|-----------------|-------|
-| Free | 25 | 15/hr | 5 | $0 |
-| Free+ | 100 | 50/hr | 25 | $0 (card on file) |
+| Free | 50 | 25/hr | 25 | $0 |
+| Free+ | 200 | 50/hr | 50 | $0 (card on file) |
 | Basic | 10,000 | 1,000/hr | 100 | $10/mo |
 | Pro | 50,000 | 5,000/hr | 100 | $20/mo |
 | Business | 300,000 | 30,000/hr | 100 | $30/mo |

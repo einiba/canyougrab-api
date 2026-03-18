@@ -22,20 +22,21 @@ from valkey_client import create_job, get_job_status, get_job_results, get_valke
 from keys import router as keys_router
 from billing import billing_router, stripe_router
 from antifraud import antifraud_router
+from oauth import router as oauth_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
 PLAN_MONTHLY_LIMITS = {
-    'free': 25,
-    'free_plus': 100,
+    'free': 50,
+    'free_plus': 200,
     'basic': 10_000,
     'pro': 50_000,
     'business': 300_000,
 }
 
 PLAN_HOURLY_LIMITS = {
-    'free': 15,
+    'free': 25,
     'free_plus': 50,
     'basic': 1_000,
     'pro': 5_000,
@@ -43,8 +44,8 @@ PLAN_HOURLY_LIMITS = {
 }
 
 PLAN_DOMAIN_CAPS = {
-    'free': 5,
-    'free_plus': 25,
+    'free': 25,
+    'free_plus': 50,
     'basic': 100,
     'pro': 100,
     'business': 100,
@@ -64,6 +65,7 @@ app.include_router(keys_router)
 app.include_router(billing_router)
 app.include_router(stripe_router)
 app.include_router(antifraud_router)
+app.include_router(oauth_router)
 
 
 # ── Rate limiting via Valkey ───────────────────────────────────────
