@@ -20,6 +20,7 @@ from contextvars import ContextVar
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 
 API_BASE = os.environ.get("CANYOUGRAB_API_URL", "https://api.canyougrab.it")
 
@@ -59,7 +60,7 @@ def _get_api_key() -> str:
     return key
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def check_domains(domains: list[str]) -> dict:
     """Check domain name availability with confidence scoring.
 
@@ -104,7 +105,7 @@ async def check_domains(domains: list[str]) -> dict:
     return resp.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def check_usage() -> dict:
     """Check your CanYouGrab.it API usage for the current billing period.
 

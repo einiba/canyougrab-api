@@ -22,11 +22,10 @@
   };
 })(document, "script");
 
-window.addEventListener("chatwoot:ready", function () {
-  // Dark mode to match portal theme
-  window.$chatwoot.setColorScheme("dark");
+// Track identification state
+var _cwIdentified = false;
 
-  // Pass authenticated user identity from Auth0
+function _cwGetAuth0User() {
   try {
     var keys = Object.keys(localStorage);
     for (var i = 0; i < keys.length; i++) {
@@ -37,15 +36,37 @@ window.addEventListener("chatwoot:ready", function () {
           data.body &&
           data.body.decodedToken &&
           data.body.decodedToken.user;
-        if (user) {
-          window.$chatwoot.setUser(user.sub, {
-            email: user.email,
-            name: user.name || user.nickname,
-            avatar_url: user.picture,
-          });
-        }
-        break;
+        if (user && user.email) return user;
       }
     }
   } catch (e) {}
+  return null;
+}
+
+function _cwIdentifyUser() {
+  if (_cwIdentified || !window.$chatwoot) return false;
+  var user = _cwGetAuth0User();
+  if (!user) return false;
+  window.$chatwoot.setUser(user.sub, {
+    email: user.email,
+    name: user.name || user.nickname,
+    avatar_url: user.picture,
+  });
+  _cwIdentified = true;
+  return true;
+}
+
+window.addEventListener("chatwoot:ready", function () {
+  window.$chatwoot.setColorScheme("dark");
+
+  // Try to identify immediately; if Auth0 hasn't loaded yet, retry
+  if (!_cwIdentifyUser()) {
+    var attempts = 0;
+    var interval = setInterval(function () {
+      attempts++;
+      if (_cwIdentifyUser() || attempts > 20) {
+        clearInterval(interval);
+      }
+    }, 500);
+  }
 });
