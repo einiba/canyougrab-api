@@ -1,30 +1,14 @@
 import type { ZudokuConfig, ZudokuPlugin } from "zudoku";
 import { PricingPage } from "./src/PricingPage.js";
 import { UsageDashboard } from "./src/UsageDashboard.js";
-import { CardSetupPage } from "./src/CardSetupPage.js";
-import { API_BASE, TURNSTILE_SITE_KEY, CHATWOOT_BASE_URL, CHATWOOT_WEBSITE_TOKEN } from "./src/config.js";
+import { API_BASE, TURNSTILE_SITE_KEY } from "./src/config.js";
 
 const overrideCssPlugin: ZudokuPlugin = {
   getHead: () => (
     <>
       <link rel="stylesheet" href="/overrides.css" />
       <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer />
-      <script dangerouslySetInnerHTML={{ __html: `
-        (function(d,t) {
-          var BASE_URL="${CHATWOOT_BASE_URL}";
-          var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
-          g.src=BASE_URL+"/packs/js/sdk.js";
-          g.defer=true;
-          g.async=true;
-          s.parentNode.insertBefore(g,s);
-          g.onload=function(){
-            window.chatwootSDK.run({
-              websiteToken: "${CHATWOOT_WEBSITE_TOKEN}",
-              baseUrl: BASE_URL,
-            })
-          }
-        })(document,"script");
-      `}} />
+      <script src="/chatwoot-init.js" defer />
     </>
   ),
 };
