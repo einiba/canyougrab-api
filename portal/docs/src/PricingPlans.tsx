@@ -13,7 +13,7 @@ const PLANS = [
     cta: "Get Started Free",
   },
   {
-    name: "Free+",
+    name: "Verified",
     key: "free_plus",
     price: 0,
     priceLabel: "Free",
@@ -104,7 +104,7 @@ export function PricingPlans({
             </p>
 
             {plan.subtitle && (
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-orange-400 mt-1">
                 {plan.subtitle}
               </p>
             )}
