@@ -56,20 +56,17 @@ export function PricingPlans({
               </p>
             )}
 
-            {per100 !== "\u2014" && (
-              <p className="text-sm mt-4">
-                ${per100} per 100 lookups
-              </p>
-            )}
-            <p className={`text-sm ${per100 === "\u2014" ? "mt-4" : "mt-2"}`}>
+            <p className="text-sm mt-4">
               {plan.minuteLimit.toLocaleString()} requests / min
             </p>
             <p className="text-sm mt-2">
               {plan.monthlyLimit.toLocaleString()} lookups / month
             </p>
-            <p className="text-sm mt-2 text-muted-foreground">
-              {plan.domainCap} domains / request
-            </p>
+            {per100 !== "\u2014" && (
+              <p className="text-sm mt-2 text-muted-foreground">
+                ${per100} per 100 lookups
+              </p>
+            )}
 
             <div className="mt-auto pt-5 w-full">
               {isCurrent ? (
