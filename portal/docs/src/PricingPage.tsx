@@ -13,16 +13,23 @@ export function PricingPage() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [freePlusLoading, setFreePlusLoading] = useState(false);
   const [checkoutStatus, setCheckoutStatus] = useState<"success" | "cancel" | null>(null);
+  const [cardSetupStatus, setCardSetupStatus] = useState<"success" | "cancel" | null>(null);
 
-  // Check for checkout result in URL params
+  // Check for checkout/card_setup result in URL params
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const status = params.get("checkout");
+    const cardStatus = params.get("card_setup");
     if (status === "success" || status === "cancel") {
       setCheckoutStatus(status);
-      // Clean up URL
+    }
+    if (cardStatus === "success" || cardStatus === "cancel") {
+      setCardSetupStatus(cardStatus);
+    }
+    if (status || cardStatus) {
       const url = new URL(window.location.href);
       url.searchParams.delete("checkout");
+      url.searchParams.delete("card_setup");
       window.history.replaceState({}, "", url.pathname);
     }
   }, []);
@@ -99,13 +106,12 @@ export function PricingPage() {
       const signed = await signRequest(req);
       const res = await fetch(signed);
       const json = await res.json();
-      if (json.client_secret) {
-        sessionStorage.setItem("setup_intent_secret", json.client_secret);
-        window.location.href = "/settings/add-card";
+      if (json.url) {
+        window.location.href = json.url;
+      } else {
+        setFreePlusLoading(false);
       }
     } catch {
-      // Silently fail
-    } finally {
       setFreePlusLoading(false);
     }
   }, [auth, signRequest]);
@@ -148,6 +154,22 @@ export function PricingPage() {
         <div className="border border-yellow-800 rounded-lg p-4 bg-yellow-950 mb-6">
           <p className="text-yellow-400">
             Checkout was cancelled. You can try again below.
+          </p>
+        </div>
+      )}
+
+      {cardSetupStatus === "success" && (
+        <div className="border border-primary/30 rounded-lg p-4 bg-primary/10 mb-6">
+          <p className="text-primary">
+            Card verified! Your account has been upgraded to Free+ with 200 lookups/month.
+          </p>
+        </div>
+      )}
+
+      {cardSetupStatus === "cancel" && (
+        <div className="border border-yellow-800 rounded-lg p-4 bg-yellow-950 mb-6">
+          <p className="text-yellow-400">
+            Card setup was cancelled. You can try again below.
           </p>
         </div>
       )}

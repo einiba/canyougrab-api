@@ -210,17 +210,12 @@ export function UsageDashboard() {
       const res = await fetch(signed);
       const json = await res.json();
 
-      if (json.client_secret) {
-        // Store the client secret and redirect to card setup page
-        // In production, this would open a Stripe Elements modal or redirect
-        // For now, we'll use Stripe Checkout in setup mode
-        // The frontend Stripe integration will handle the client_secret
-        sessionStorage.setItem("setup_intent_secret", json.client_secret);
-        window.location.href = "/settings/add-card";
+      if (json.url) {
+        window.location.href = json.url;
+      } else {
+        setCardLoading(false);
       }
     } catch {
-      // Silently fail
-    } finally {
       setCardLoading(false);
     }
   }, [signRequest]);

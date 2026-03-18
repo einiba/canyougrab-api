@@ -202,24 +202,73 @@ def create_portal(user: JWTUser = Depends(jwt_auth)):
     return {'url': session.get('url', '')}
 
 
-# ── Card on file (Free+ upgrade via SetupIntent) ──────────────────
+# ── Card on file (Free+ upgrade via Stripe Checkout in setup mode) ──
 
 @billing_router.post('/setup-card')
 def setup_card(user: JWTUser = Depends(jwt_auth)):
-    """Create a Stripe SetupIntent to collect a card for Free+ tier.
-    The card is validated but not charged. Returns client_secret for Stripe Elements."""
+    """Create a Stripe Checkout session in setup mode to collect a card.
+    Redirects to Stripe's hosted page — we never touch card details."""
     customer_id = _find_or_create_customer(user.sub, user.email)
 
-    setup_intent = _stripe_request('POST', 'setup_intents', {
+    session = _stripe_request('POST', 'checkout/sessions', {
         'customer': customer_id,
-        'usage': 'off_session',
+        'mode': 'setup',
+        'payment_method_types': ['card'],
+        'success_url': f'{PORTAL_URL}/pricing?card_setup=success',
+        'cancel_url': f'{PORTAL_URL}/pricing?card_setup=cancel',
         'metadata': {'auth0_sub': user.sub, 'purpose': 'free_plus_upgrade'},
     })
 
-    return {
-        'client_secret': setup_intent.get('client_secret', ''),
-        'setup_intent_id': setup_intent.get('id', ''),
-    }
+    return {'url': session.get('url', '')}
+
+
+def _handle_free_plus_upgrade(auth0_sub: str, customer_id: str):
+    """Verify card fingerprint and upgrade user to Free+. Called from webhook."""
+    pms = _stripe_request('GET', f'payment_methods?customer={customer_id}&type=card&limit=1')
+    pm_data = pms.get('data', [])
+    if not pm_data:
+        logger.warning('Free+ upgrade: no card found for customer %s', customer_id)
+        return
+
+    card = pm_data[0].get('card', {})
+    fingerprint = card.get('fingerprint', '')
+    if not fingerprint:
+        logger.warning('Free+ upgrade: no fingerprint for customer %s', customer_id)
+        return
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # Check if this card fingerprint is already used for a different account
+            cur.execute("""
+                SELECT user_sub FROM card_fingerprints
+                WHERE stripe_fingerprint = %s AND user_sub != %s
+            """, (fingerprint, auth0_sub))
+            existing = cur.fetchone()
+            if existing:
+                logger.warning('Free+ upgrade blocked: card already used by %s', existing[0][:20])
+                return
+
+            # Store the card fingerprint
+            cur.execute("""
+                INSERT INTO card_fingerprints (user_sub, stripe_fingerprint)
+                VALUES (%s, %s)
+                ON CONFLICT (user_sub, stripe_fingerprint) DO NOTHING
+            """, (auth0_sub, fingerprint))
+
+            # Upgrade all active keys from free to free_plus
+            cur.execute("""
+                UPDATE api_keys
+                SET plan = 'free_plus', lookups_limit = %s
+                WHERE user_sub = %s AND revoked_at IS NULL AND plan = 'free'
+            """, (FREE_PLAN_LIMITS['free_plus'], auth0_sub))
+            upgraded = cur.rowcount
+            conn.commit()
+
+        logger.info('User %s upgraded to free_plus via webhook (card fp: %s..., %d keys)',
+                     auth0_sub[:20], fingerprint[:8], upgraded)
+    finally:
+        conn.close()
 
 
 @billing_router.post('/confirm-free-plus')
@@ -322,22 +371,31 @@ async def stripe_webhook(request: Request):
 
     if event_type == 'checkout.session.completed':
         session = event['data']['object']
-        subscription_id = session.get('subscription')
-        if not subscription_id:
-            logger.warning('checkout.session.completed missing subscription')
-            return {'received': True}
+        mode = session.get('mode', '')
 
-        sub = _stripe_request('GET', f'subscriptions/{subscription_id}')
-        price_id = sub.get('items', {}).get('data', [{}])[0].get('price', {}).get('id')
+        if mode == 'setup':
+            # Card-on-file flow for Free+ upgrade
+            auth0_sub = session.get('metadata', {}).get('auth0_sub')
+            setup_intent_id = session.get('setup_intent')
+            if auth0_sub and setup_intent_id:
+                _handle_free_plus_upgrade(auth0_sub, session.get('customer', ''))
+        elif mode == 'subscription':
+            subscription_id = session.get('subscription')
+            if not subscription_id:
+                logger.warning('checkout.session.completed missing subscription')
+                return {'received': True}
 
-        auth0_sub = (
-            sub.get('metadata', {}).get('auth0_sub')
-            or session.get('metadata', {}).get('auth0_sub')
-        )
+            sub = _stripe_request('GET', f'subscriptions/{subscription_id}')
+            price_id = sub.get('items', {}).get('data', [{}])[0].get('price', {}).get('id')
 
-        if auth0_sub and price_id and price_id in PRICE_TO_PLAN:
-            plan_info = PRICE_TO_PLAN[price_id]
-            _update_user_plan(auth0_sub, plan_info['name'], plan_info['limit'])
+            auth0_sub = (
+                sub.get('metadata', {}).get('auth0_sub')
+                or session.get('metadata', {}).get('auth0_sub')
+            )
+
+            if auth0_sub and price_id and price_id in PRICE_TO_PLAN:
+                plan_info = PRICE_TO_PLAN[price_id]
+                _update_user_plan(auth0_sub, plan_info['name'], plan_info['limit'])
 
     elif event_type == 'customer.subscription.updated':
         subscription = event['data']['object']

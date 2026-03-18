@@ -126,12 +126,6 @@ const config: ZudokuConfig = {
     },
     {
       type: "custom-page",
-      path: "/settings/add-card",
-      element: <CardSetupPage />,
-      display: "auth",
-    },
-    {
-      type: "custom-page",
       path: "/pricing",
       label: "Plans & Pricing",
       element: <PricingPage />,
