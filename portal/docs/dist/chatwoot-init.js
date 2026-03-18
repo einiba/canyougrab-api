@@ -1,3 +1,11 @@
+window.chatwootSettings = {
+  position: "right",
+  type: "expanded_bubble",
+  launcherTitle: "Support",
+  darkMode: "auto",
+  showPopoutButton: true,
+};
+
 (function (d, t) {
   var hostname = window.location.hostname;
   var isDev =
@@ -21,3 +29,27 @@
     });
   };
 })(document, "script");
+
+window.addEventListener("chatwoot:ready", function () {
+  try {
+    var keys = Object.keys(localStorage);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf("@@auth0spajs@@") !== -1) {
+        var data = JSON.parse(localStorage.getItem(keys[i]));
+        var user =
+          data &&
+          data.body &&
+          data.body.decodedToken &&
+          data.body.decodedToken.user;
+        if (user) {
+          window.$chatwoot.setUser(user.sub, {
+            email: user.email,
+            name: user.name || user.nickname,
+            avatar_url: user.picture,
+          });
+        }
+        break;
+      }
+    }
+  } catch (e) {}
+});
