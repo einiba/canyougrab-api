@@ -6,11 +6,11 @@ const PLANS = [
     key: "free",
     price: 0,
     priceLabel: "Free",
-    lookups: 50,
+    lookups: 500,
     per100: "—",
     rateLimit: 30,
-    domainCap: 25,
-    cta: "Get Started Free",
+    domainCap: 30,
+    cta: "Start Free",
   },
   {
     name: "Verified",
@@ -18,18 +18,18 @@ const PLANS = [
     price: 0,
     priceLabel: "Free",
     subtitle: "Card on file",
-    lookups: 200,
+    lookups: 10_000,
     per100: "—",
     rateLimit: 100,
-    domainCap: 50,
+    domainCap: 100,
   },
   {
     name: "Basic",
     key: "basic",
     price: 10,
     priceLabel: "$10",
-    lookups: 10_000,
-    per100: "0.10",
+    lookups: 20_000,
+    per100: "0.05",
     rateLimit: 300,
     domainCap: 100,
     popular: true,
@@ -95,7 +95,7 @@ export function PricingPlans({
               </span>
             )}
 
-            <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            <p className={`text-sm font-medium uppercase tracking-wide ${isFreePlus ? "text-orange-400" : "text-muted-foreground"}`}>
               {plan.name}
             </p>
 
@@ -135,7 +135,7 @@ export function PricingPlans({
                 </Button>
               ) : isFreePlus && onUpgradeFreePlus ? (
                 <Button
-                  className="w-full"
+                  className="w-full text-orange-400 border-orange-400 hover:bg-orange-400/10"
                   variant="outline"
                   disabled={freePlusLoading}
                   onClick={() => onUpgradeFreePlus()}

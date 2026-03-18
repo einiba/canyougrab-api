@@ -28,9 +28,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 PLAN_MONTHLY_LIMITS = {
-    'free': 50,
-    'free_plus': 200,
-    'basic': 10_000,
+    'free': 500,
+    'free_plus': 10_000,
+    'basic': 20_000,
     'pro': 50_000,
     'business': 300_000,
 }
@@ -44,8 +44,8 @@ PLAN_MINUTE_LIMITS = {
 }
 
 PLAN_DOMAIN_CAPS = {
-    'free': 25,
-    'free_plus': 50,
+    'free': 30,
+    'free_plus': 100,
     'basic': 100,
     'pro': 100,
     'business': 100,

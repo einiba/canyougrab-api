@@ -131,8 +131,8 @@ function FreePlusUpgradeBanner({ onUpgrade, loading }: { onUpgrade: () => void; 
         <div>
           <p className="font-medium">Unlock more free lookups</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Add a card on file (no charge) to upgrade to Free+ with 200 lookups/month,
-            100 requests/min, and 50 domains per request.
+            Add a card on file (no charge) to upgrade to Free+ with 10,000 lookups/month,
+            100 requests/min, and 100 domains per request.
           </p>
         </div>
         <Button onClick={onUpgrade} disabled={loading} className="ml-4 shrink-0">
