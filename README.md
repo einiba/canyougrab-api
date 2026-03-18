@@ -225,8 +225,8 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
 | `api_keys` | User API keys | `id`, `user_sub`, `email_normalized`, `key_hash`, `key_prefix`, `plan`, `lookups_limit`, `revoked_at` |
-| `usage_log` | Daily usage aggregates | `consumer`, `lookups`, `recorded_at` (DATE, unique per consumer+day) |
-| `minute_usage_log` | Per-minute usage aggregates | `consumer`, `lookups`, `minute_start` (TIMESTAMP, unique per consumer+minute) |
+| `usage_log_daily` | Daily usage aggregates | `consumer`, `lookups`, `recorded_at` (DATE, unique per consumer+day) |
+| `usage_log_minute` | Per-minute usage aggregates | `consumer`, `lookups`, `minute_start` (TIMESTAMP, unique per consumer+minute) |
 | `card_fingerprints` | One free account per card | `user_sub`, `stripe_fingerprint` (unique pair) |
 | `device_fingerprints` | Device-based multi-account detection | `user_sub`, `visitor_id` (Fingerprint Pro) |
 | `account_risk` | Composite risk scoring | `user_sub` (unique), `risk_score`, `risk_signals` (JSONB) |
@@ -397,7 +397,7 @@ Portal dev server hardcodes `API_BASE` to `https://api.canyougrab.it` in `portal
 - **Long-polling**: The bulk check endpoint holds the HTTP connection open (polling Valkey every 0.3s, up to 30s) rather than requiring clients to implement polling.
 - **API keys with SHA-256 hashing**: Keys are hashed before storage (like passwords), so a database breach doesn't expose raw keys.
 - **Stripe metadata linking**: Stripe customers are linked to Auth0 users via `auth0_sub` metadata on the Stripe customer object, avoiding a separate mapping table.
-- **Usage double-tracking**: Both daily (`usage_log`) and per-minute (`minute_usage_log`) usage are recorded for monthly quota and per-minute rate limiting respectively.
+- **Usage double-tracking**: Both daily (`usage_log_daily`) and per-minute (`usage_log_minute`) usage are recorded for monthly quota and per-minute rate limiting respectively.
 - **No Zuplo gateway policies**: The project originally used Zuplo as an API gateway but migrated to direct FastAPI (commit `3abef70`). The Zuplo portal/docs framework is still used for the developer portal.
 
 ## Processes on Servers

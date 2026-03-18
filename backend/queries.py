@@ -25,7 +25,7 @@ def _ensure_usage_table(conn):
     """Create the usage tracking table if it doesn't exist."""
     with conn.cursor() as cur:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS usage_log (
+            CREATE TABLE IF NOT EXISTS usage_log_daily (
                 id SERIAL PRIMARY KEY,
                 consumer TEXT NOT NULL,
                 lookups INTEGER NOT NULL DEFAULT 0,
@@ -43,10 +43,10 @@ def record_usage(consumer: str, lookup_count: int):
         _ensure_usage_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO usage_log (consumer, lookups, recorded_at)
+                INSERT INTO usage_log_daily (consumer, lookups, recorded_at)
                 VALUES (%s, %s, CURRENT_DATE)
                 ON CONFLICT (consumer, recorded_at)
-                DO UPDATE SET lookups = usage_log.lookups + EXCLUDED.lookups
+                DO UPDATE SET lookups = usage_log_daily.lookups + EXCLUDED.lookups
             """, (consumer, lookup_count))
             conn.commit()
     finally:
@@ -61,7 +61,7 @@ def get_usage(consumer: str) -> dict:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT COALESCE(SUM(lookups), 0) AS lookups_today
-                FROM usage_log
+                FROM usage_log_daily
                 WHERE consumer = %s AND recorded_at = CURRENT_DATE
             """, (consumer,))
             row = cur.fetchone()
@@ -88,7 +88,7 @@ def get_detailed_usage(consumers: list) -> dict:
                 placeholders = ",".join(["%s"] * len(consumers))
                 cur.execute(f"""
                     SELECT consumer, COALESCE(SUM(lookups), 0) AS lookups_today
-                    FROM usage_log
+                    FROM usage_log_daily
                     WHERE consumer IN ({placeholders}) AND recorded_at = CURRENT_DATE
                     GROUP BY consumer
                 """, consumers)
@@ -108,7 +108,7 @@ def get_monthly_usage(consumer: str) -> int:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT COALESCE(SUM(lookups), 0)
-                FROM usage_log
+                FROM usage_log_daily
                 WHERE consumer = %s
                   AND recorded_at >= DATE_TRUNC('month', CURRENT_DATE)::date
             """, (consumer,))
@@ -129,7 +129,7 @@ def get_monthly_detailed_usage(consumers: list) -> dict:
                 placeholders = ",".join(["%s"] * len(consumers))
                 cur.execute(f"""
                     SELECT consumer, COALESCE(SUM(lookups), 0) AS lookups_month
-                    FROM usage_log
+                    FROM usage_log_daily
                     WHERE consumer IN ({placeholders})
                       AND recorded_at >= DATE_TRUNC('month', CURRENT_DATE)::date
                     GROUP BY consumer
@@ -146,7 +146,7 @@ def _ensure_minute_usage_table(conn):
     """Create the per-minute usage tracking table if it does not exist."""
     with conn.cursor() as cur:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS minute_usage_log (
+            CREATE TABLE IF NOT EXISTS usage_log_minute (
                 id SERIAL PRIMARY KEY,
                 consumer TEXT NOT NULL,
                 lookups INTEGER NOT NULL DEFAULT 0,
@@ -164,10 +164,10 @@ def record_minute_usage(consumer: str, lookup_count: int):
         _ensure_minute_usage_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO minute_usage_log (consumer, lookups, minute_start)
+                INSERT INTO usage_log_minute (consumer, lookups, minute_start)
                 VALUES (%s, %s, DATE_TRUNC('minute', NOW()))
                 ON CONFLICT (consumer, minute_start)
-                DO UPDATE SET lookups = minute_usage_log.lookups + EXCLUDED.lookups
+                DO UPDATE SET lookups = usage_log_minute.lookups + EXCLUDED.lookups
             """, (consumer, lookup_count))
             conn.commit()
     finally:
@@ -182,7 +182,7 @@ def get_minute_usage(consumer: str) -> int:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT COALESCE(SUM(lookups), 0)
-                FROM minute_usage_log
+                FROM usage_log_minute
                 WHERE consumer = %s
                   AND minute_start = DATE_TRUNC('minute', NOW())
             """, (consumer,))
@@ -203,7 +203,7 @@ def get_minute_detailed_usage(consumers: list) -> dict:
                 placeholders = ",".join(["%s"] * len(consumers))
                 cur.execute(f"""
                     SELECT consumer, COALESCE(SUM(lookups), 0) AS lookups_minute
-                    FROM minute_usage_log
+                    FROM usage_log_minute
                     WHERE consumer IN ({placeholders})
                       AND minute_start = DATE_TRUNC('minute', NOW())
                     GROUP BY consumer
