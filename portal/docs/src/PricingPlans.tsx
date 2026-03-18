@@ -10,7 +10,6 @@ const PLANS = [
     rateLimit: 25,
     domainCap: 25,
     cta: "Get Started Free",
-    note: "Add a card to unlock 200 lookups/mo",
   },
   {
     name: "Basic",
@@ -45,13 +44,17 @@ const PLANS = [
 interface PricingPlansProps {
   currentPlan?: string;
   onSelectPlan?: (plan: string) => void;
+  onUpgradeFreePlus?: () => void;
   loadingPlan?: string | null;
+  freePlusLoading?: boolean;
 }
 
 export function PricingPlans({
   currentPlan,
   onSelectPlan,
+  onUpgradeFreePlus,
   loadingPlan,
+  freePlusLoading,
 }: PricingPlansProps) {
   // Normalize: both "free" and "free_plus" highlight the Free column
   const normalizedCurrent = currentPlan?.toLowerCase();
@@ -106,10 +109,26 @@ export function PricingPlans({
               {plan.domainCap} domains / request
             </p>
 
-            {plan.note && (
-              <p className="text-xs text-muted-foreground mt-3 italic">
-                {plan.note}
-              </p>
+            {plan.key === "free" && normalizedCurrent !== "free_plus" && onUpgradeFreePlus && (
+              <div className="mt-4 w-full border border-primary/30 rounded-md p-3 bg-primary/5">
+                <p className="text-xs font-medium text-primary mb-1">
+                  Unlock higher limits — free
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Add a card on file to verify your account. You won't be charged.
+                </p>
+                <Button
+                  className="w-full text-xs h-7"
+                  variant="outline"
+                  disabled={freePlusLoading}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    onUpgradeFreePlus();
+                  }}
+                >
+                  {freePlusLoading ? "Setting up..." : "Unlock Free+ (200 lookups/mo)"}
+                </Button>
+              </div>
             )}
 
             <div className="mt-auto pt-5 w-full">

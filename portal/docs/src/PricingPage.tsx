@@ -11,6 +11,7 @@ export function PricingPage() {
   const [hasSub, setHasSub] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [freePlusLoading, setFreePlusLoading] = useState(false);
   const [checkoutStatus, setCheckoutStatus] = useState<"success" | "cancel" | null>(null);
 
   // Check for checkout result in URL params
@@ -85,6 +86,30 @@ export function PricingPage() {
     [auth, signRequest],
   );
 
+  const handleUpgradeFreePlus = useCallback(async () => {
+    if (!auth.isAuthenticated) {
+      auth.login();
+      return;
+    }
+    setFreePlusLoading(true);
+    try {
+      const req = new Request(API_BASE + "/api/billing/setup-card", {
+        method: "POST",
+      });
+      const signed = await signRequest(req);
+      const res = await fetch(signed);
+      const json = await res.json();
+      if (json.client_secret) {
+        sessionStorage.setItem("setup_intent_secret", json.client_secret);
+        window.location.href = "/settings/add-card";
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setFreePlusLoading(false);
+    }
+  }, [auth, signRequest]);
+
   const handleCancelSubscription = useCallback(async () => {
     setCancelLoading(true);
     try {
@@ -130,7 +155,9 @@ export function PricingPage() {
       <PricingPlans
         currentPlan={currentPlan}
         onSelectPlan={handleSelectPlan}
+        onUpgradeFreePlus={handleUpgradeFreePlus}
         loadingPlan={loadingPlan}
+        freePlusLoading={freePlusLoading}
       />
 
       <p className="text-center text-sm text-muted-foreground mt-6">
