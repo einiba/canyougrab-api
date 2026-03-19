@@ -450,8 +450,8 @@ async def token(request: Request):
     if "application/json" in content_type:
         body = await request.json()
     else:
-        form = await request.form()
-        body = dict(form)
+        raw_body = (await request.body()).decode("utf-8")
+        body = dict(urllib.parse.parse_qsl(raw_body, keep_blank_values=True))
 
     grant_type = body.get("grant_type", "")
     code = body.get("code", "")
