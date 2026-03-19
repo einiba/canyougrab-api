@@ -1,6 +1,6 @@
 [project]
 name = "mcp-server-canyougrab"
-version = "1.0.1"
+version = "1.0.2"
 description = "MCP server for confidence-scored domain availability checking via CanYouGrab.it"
 readme = "README.md"
 requires-python = ">=3.10"

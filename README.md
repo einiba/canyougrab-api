@@ -84,6 +84,13 @@ zuplo/
 │   │   └── package.json        # Frontend dependencies (React 19, Zudoku)
 │   ├── package.json            # Workspace root (Zuplo v6, TypeScript v5)
 │   └── README.md               # Zuplo boilerplate (not project-specific)
+├── mcp-server/                 # MCP package for ChatGPT, Claude, and remote MCP clients
+│   ├── pyproject.toml          # MCP package metadata + version
+│   ├── server.json             # MCP registry/server metadata
+│   ├── uv.lock                 # Locked MCP runtime dependencies
+│   └── src/canyougrab_mcp/
+│       ├── __init__.py
+│       └── server.py           # stdio + streamable-http MCP entrypoint
 ├── .github/workflows/
 │   ├── deploy.yml              # Production deploy (on tag push v*)
 │   └── deploy-dev.yml          # Dev deploy (on push to dev branch)
@@ -293,7 +300,10 @@ git push origin dev
 Both pipelines call `/opt/deploy.sh` on the respective server. This script (on the server, not in the repo) handles:
 - `git fetch` + `git checkout` to the specified tag or branch
 - `pip install -r requirements.txt` for backend dependencies
-- Restart of FastAPI (uvicorn) and worker processes via systemd
+- Reinstall or refresh the `mcp-server` package/runtime when the server also hosts `/mcp`
+- Restart of FastAPI (uvicorn), worker, and MCP services via systemd
+
+If `/mcp` is served by the same host as the API, backend-only deploys are not enough. The MCP service must be updated and restarted during the same deploy or the OAuth metadata and live MCP behavior can drift apart.
 
 ### Branching Strategy
 
@@ -402,9 +412,10 @@ Portal dev server hardcodes `API_BASE` to `https://api.canyougrab.it` in `portal
 
 ## Processes on Servers
 
-Each server runs two systemd-managed processes:
+Each server runs at least two systemd-managed processes:
 
 1. **FastAPI** (uvicorn): Serves all HTTP endpoints on port 8000
 2. **Worker** (worker.py): Processes domain check jobs from the Valkey queue
+3. **MCP server** (`mcp-server-canyougrab --streamable-http`, if `/mcp` is hosted on this server): Serves remote MCP clients and OAuth-aware tool flows
 
-Both are managed via systemd and restarted by `/opt/deploy.sh` during deployments.
+All active services on the host must be managed via systemd and restarted by `/opt/deploy.sh` during deployments.

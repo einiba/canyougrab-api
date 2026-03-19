@@ -327,7 +327,7 @@ wheels = [
 
 [[package]]
 name = "mcp-server-canyougrab"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
