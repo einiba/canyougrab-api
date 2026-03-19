@@ -24,6 +24,7 @@ from mcp.types import CallToolResult, TextContent, Tool as MCPTool, ToolAnnotati
 
 API_BASE_OVERRIDE = os.environ.get("CANYOUGRAB_API_URL", "").rstrip("/")
 DEFAULT_API_BASE = "https://api.canyougrab.it"
+OFFLINE_ACCESS_SCOPE = "offline_access"
 DOMAINS_READ_SCHEMES = [{"type": "oauth2", "scopes": ["domains.read"]}]
 ACCOUNT_READ_SCHEMES = [{"type": "oauth2", "scopes": ["account.read"]}]
 
@@ -104,11 +105,19 @@ def _quote_auth_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _auth_scopes(scopes: list[str]) -> list[str]:
+    requested = list(scopes)
+    if OFFLINE_ACCESS_SCOPE not in requested:
+        requested.append(OFFLINE_ACCESS_SCOPE)
+    return requested
+
+
 def _auth_result(description: str, scopes: list[str]) -> CallToolResult:
+    requested_scopes = _auth_scopes(scopes)
     challenge = (
         "Bearer "
         f'resource_metadata="{_quote_auth_value(_get_resource_metadata_url())}", '
-        f'scope="{_quote_auth_value(" ".join(scopes))}", '
+        f'scope="{_quote_auth_value(" ".join(requested_scopes))}", '
         'error="invalid_token", '
         f'error_description="{_quote_auth_value(description)}"'
     )

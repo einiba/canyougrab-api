@@ -15,7 +15,7 @@ from fastapi import FastAPI, Body, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from auth import APIKeyUser, api_key_auth
+from auth import APIKeyUser, account_read_auth, domains_read_auth
 from plans import get_plan, get_published_plans
 from queries import (
     record_usage, get_usage,
@@ -272,7 +272,7 @@ async def do_bulk_check(
 async def api_check_bulk(
     request: Request,
     body: dict = Body(...),
-    user: APIKeyUser = Depends(api_key_auth),
+    user: APIKeyUser = Depends(domains_read_auth),
     verbose: bool = Query(False, description='Include internal timing and debug fields'),
 ):
     """Check availability of up to 100 domains. Holds connection open until results are ready."""
@@ -287,7 +287,7 @@ async def api_check_bulk(
 # ── Other API routes ──────────────────────────────────────────────
 
 @app.get('/api/account/usage')
-def api_account_usage(user: APIKeyUser = Depends(api_key_auth)):
+def api_account_usage(user: APIKeyUser = Depends(account_read_auth)):
     """Returns usage data for the authenticated consumer."""
     plan_info = get_plan(user.plan)
     usage = get_usage(user.consumer_id)
@@ -313,7 +313,7 @@ def api_account_usage_detailed(body: dict = Body(...)):
 
 
 @app.get('/api/account/quota-check')
-def api_quota_check(user: APIKeyUser = Depends(api_key_auth)):
+def api_quota_check(user: APIKeyUser = Depends(account_read_auth)):
     """Lightweight quota check."""
     return {
         'consumer': user.consumer_id,

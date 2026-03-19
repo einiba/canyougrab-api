@@ -7,6 +7,7 @@ Two auth paths:
 """
 
 import hashlib
+import json
 import logging
 import os
 import time
@@ -18,6 +19,7 @@ from fastapi import Depends, HTTPException, Request
 from jose import jwt, JWTError
 
 from queries import get_db_conn
+from valkey_client import get_valkey
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,7 @@ AUTH0_DOMAIN = 'auth.canyougrab.it'
 AUTH0_AUDIENCE = 'https://api.canyougrab.it'
 AUTH0_ISSUER = f'https://{AUTH0_DOMAIN}/'
 JWKS_URL = f'https://{AUTH0_DOMAIN}/.well-known/jwks.json'
+RESOURCE_SCOPES = frozenset({'domains.read', 'account.read'})
 
 # JWKS cache
 _jwks_cache = None
@@ -73,25 +76,26 @@ def _find_rsa_key(token: str) -> Optional[dict]:
 
 class APIKeyUser:
     """Represents an authenticated API key consumer."""
-    __slots__ = ('consumer_id', 'user_sub', 'plan', 'email')
+    __slots__ = ('consumer_id', 'user_sub', 'plan', 'email', 'scopes', 'auth_type')
 
-    def __init__(self, consumer_id: str, user_sub: str, plan: str, email: str = ''):
+    def __init__(
+        self,
+        consumer_id: str,
+        user_sub: str,
+        plan: str,
+        email: str = '',
+        scopes: frozenset[str] | None = None,
+        auth_type: str = 'api_key',
+    ):
         self.consumer_id = consumer_id
         self.user_sub = user_sub
         self.plan = plan
         self.email = email
+        self.scopes = scopes or RESOURCE_SCOPES
+        self.auth_type = auth_type
 
 
-def api_key_auth(request: Request) -> APIKeyUser:
-    """FastAPI dependency — validates Bearer API key from Authorization header."""
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        raise HTTPException(status_code=401, detail='Missing or invalid Authorization header. Use: Bearer <api_key>')
-
-    raw_key = auth_header[7:]
-    if not raw_key:
-        raise HTTPException(status_code=401, detail='Empty API key')
-
+def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str) -> APIKeyUser:
     key_hash = _hash_key(raw_key)
 
     conn = get_db_conn()
@@ -114,7 +118,69 @@ def api_key_auth(request: Request) -> APIKeyUser:
         user_sub=row[1],
         plan=row[2],
         email=row[3] or '',
+        scopes=scopes,
+        auth_type=auth_type,
     )
+
+
+def _oauth_access_payload(raw_token: str) -> dict | None:
+    payload = get_valkey().get(f'oauth:access:{raw_token}')
+    return json.loads(payload) if payload else None
+
+
+def _authenticate_api_bearer(raw_bearer: str, required_scopes: frozenset[str] | None = None) -> APIKeyUser:
+    required_scopes = required_scopes or frozenset()
+
+    oauth_payload = _oauth_access_payload(raw_bearer)
+    if oauth_payload:
+        granted_scopes = frozenset(scope for scope in oauth_payload.get('scope', '').split() if scope)
+        if not required_scopes.issubset(granted_scopes):
+            raise HTTPException(
+                status_code=401,
+                detail='OAuth token is missing a required scope',
+                headers={'WWW-Authenticate': 'Bearer error="insufficient_scope"'},
+            )
+        return _lookup_api_key_user(
+            oauth_payload['api_key'],
+            scopes=granted_scopes,
+            auth_type='oauth_access_token',
+        )
+
+    return _lookup_api_key_user(raw_bearer, scopes=RESOURCE_SCOPES, auth_type='api_key')
+
+
+def api_key_auth(request: Request) -> APIKeyUser:
+    """FastAPI dependency — validates Bearer API key from Authorization header."""
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail='Missing or invalid Authorization header. Use: Bearer <api_key>')
+
+    raw_key = auth_header[7:]
+    if not raw_key:
+        raise HTTPException(status_code=401, detail='Empty API key')
+
+    return _authenticate_api_bearer(raw_key)
+
+
+def _scoped_api_key_auth(*required_scopes: str):
+    required = frozenset(required_scopes)
+
+    def dependency(request: Request) -> APIKeyUser:
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            raise HTTPException(status_code=401, detail='Missing or invalid Authorization header. Use: Bearer <api_key>')
+
+        raw_key = auth_header[7:]
+        if not raw_key:
+            raise HTTPException(status_code=401, detail='Empty API key')
+
+        return _authenticate_api_bearer(raw_key, required)
+
+    return dependency
+
+
+domains_read_auth = _scoped_api_key_auth('domains.read')
+account_read_auth = _scoped_api_key_auth('account.read')
 
 
 # ── JWT Auth (portal/dashboard) ───────────────────────────────────

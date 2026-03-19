@@ -7,10 +7,11 @@ Bridges Auth0 authentication with CanYouGrab API keys. The flow:
   3. Auth0 redirects back to /oauth/callback
   4. We look up/create an API key for the user, generate an auth code
   5. Redirect to the MCP client's callback with the code
-  6. Client exchanges code for access token at POST /oauth/token
-  7. The access token is the user's CanYouGrab API key
+  6. Client exchanges code for an opaque access token at POST /oauth/token
+  7. If offline_access is granted, the client can refresh that access token
 """
 
+import base64
 import hashlib
 import json
 import logging
@@ -53,7 +54,14 @@ RESOURCE_DOCUMENTATION_URL_OVERRIDE = os.environ.get(
 DEFAULT_PUBLIC_ISSUER = "https://api.canyougrab.it"
 DEFAULT_PORTAL_DOCS_URL = "https://portal.canyougrab.it/docs"
 DEFAULT_DEV_PORTAL_DOCS_URL = "https://dev-portal.canyougrab.it/docs"
-SUPPORTED_SCOPES = ["domains.read", "account.read"]
+RESOURCE_SCOPES = ["domains.read", "account.read"]
+OFFLINE_ACCESS_SCOPE = "offline_access"
+SUPPORTED_SCOPES = RESOURCE_SCOPES + [OFFLINE_ACCESS_SCOPE]
+DEFAULT_OAUTH_SCOPE = " ".join(SUPPORTED_SCOPES)
+OAUTH_ACCESS_TOKEN_TTL = int(os.environ.get("OAUTH_ACCESS_TOKEN_TTL", str(60 * 60)))
+OAUTH_REFRESH_TOKEN_TTL = int(os.environ.get("OAUTH_REFRESH_TOKEN_TTL", str(30 * 24 * 60 * 60)))
+ACCESS_TOKEN_PREFIX = "cgoa_"
+REFRESH_TOKEN_PREFIX = "cgor_"
 
 
 def _get_valkey():
@@ -89,6 +97,76 @@ def _validate_requested_scopes(raw_scope: str | None) -> str | None:
     if invalid:
         return f"Unsupported scope(s): {' '.join(invalid)}"
     return None
+
+
+def _refresh_token_requested(raw_scope: str | None) -> bool:
+    return OFFLINE_ACCESS_SCOPE in _parse_scope_param(raw_scope)
+
+
+def _access_token_key(token: str) -> str:
+    return f"oauth:access:{token}"
+
+
+def _refresh_token_key(token: str) -> str:
+    return f"oauth:refresh:{token}"
+
+
+def _issue_access_token(*, api_key: str, client_id: str, scope: str, resource: str) -> tuple[str, int]:
+    token = ACCESS_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    payload = {
+        "api_key": api_key,
+        "client_id": client_id,
+        "scope": scope,
+        "resource": resource,
+        "issued_at": int(time.time()),
+    }
+    _get_valkey().setex(_access_token_key(token), OAUTH_ACCESS_TOKEN_TTL, json.dumps(payload))
+    return token, OAUTH_ACCESS_TOKEN_TTL
+
+
+def _issue_refresh_token(*, api_key: str, client_id: str, scope: str, resource: str) -> str:
+    token = REFRESH_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    payload = {
+        "api_key": api_key,
+        "client_id": client_id,
+        "scope": scope,
+        "resource": resource,
+        "issued_at": int(time.time()),
+    }
+    _get_valkey().setex(_refresh_token_key(token), OAUTH_REFRESH_TOKEN_TTL, json.dumps(payload))
+    return token
+
+
+def _token_response(
+    *,
+    api_key: str,
+    client_id: str,
+    scope: str,
+    resource: str,
+    include_refresh_token: bool,
+    refresh_token: str | None = None,
+) -> JSONResponse:
+    access_token, expires_in = _issue_access_token(
+        api_key=api_key,
+        client_id=client_id,
+        scope=scope,
+        resource=resource,
+    )
+    body: dict[str, Any] = {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "scope": scope,
+        "expires_in": expires_in,
+    }
+    if include_refresh_token:
+        body["refresh_token"] = refresh_token or _issue_refresh_token(
+            api_key=api_key,
+            client_id=client_id,
+            scope=scope,
+            resource=resource,
+        )
+        body["refresh_token_expires_in"] = OAUTH_REFRESH_TOKEN_TTL
+    return JSONResponse(body)
 
 
 def _request_origin(request: Request | None = None) -> str:
@@ -134,7 +212,7 @@ def _protected_resource_metadata(request: Request | None = None) -> dict[str, An
     return {
         "resource": _mcp_resource_url(request),
         "authorization_servers": [_oauth_issuer(request)],
-        "scopes_supported": SUPPORTED_SCOPES,
+        "scopes_supported": RESOURCE_SCOPES,
         "bearer_methods_supported": ["header"],
         "resource_name": "CanYouGrab.it MCP",
         "resource_documentation": _resource_documentation_url(request),
@@ -153,7 +231,7 @@ def oauth_metadata(request: Request):
         "token_endpoint": f"{issuer}/oauth/token",
         "registration_endpoint": f"{issuer}/oauth/register",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": SUPPORTED_SCOPES,
@@ -213,10 +291,10 @@ async def register_client(request: Request):
         "client_id": client_id,
         "client_name": payload.get("client_name", "CanYouGrab OAuth client"),
         "redirect_uris": redirect_uris,
-        "grant_types": ["authorization_code"],
+        "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
-        "scope": raw_scope or " ".join(SUPPORTED_SCOPES),
+        "scope": raw_scope or DEFAULT_OAUTH_SCOPE,
         "created_at": issued_at,
     }
     _save_registered_client(client_id, record)
@@ -242,7 +320,7 @@ def authorize(request: Request):
     code_challenge = params.get("code_challenge", "")
     code_challenge_method = params.get("code_challenge_method", "")
     response_type = params.get("response_type", "")
-    requested_scope = params.get("scope", " ".join(SUPPORTED_SCOPES))
+    requested_scope = params.get("scope", DEFAULT_OAUTH_SCOPE)
     resource = params.get("resource", mcp_resource_url)
 
     if response_type != "code":
@@ -424,7 +502,7 @@ async def callback(request: Request):
         "redirect_uri": session["redirect_uri"],
         "code_challenge": session.get("code_challenge", ""),
         "code_challenge_method": session.get("code_challenge_method", ""),
-        "scope": session.get("scope", " ".join(SUPPORTED_SCOPES)),
+        "scope": session.get("scope", DEFAULT_OAUTH_SCOPE),
         "resource": session.get("resource", _mcp_resource_url(request)),
     }
     r.setex(f"oauth:code:{auth_code}", AUTH_CODE_TTL, json.dumps(code_data))
@@ -455,74 +533,133 @@ async def token(request: Request):
 
     grant_type = body.get("grant_type", "")
     code = body.get("code", "")
+    refresh_token = body.get("refresh_token", "")
     client_id = body.get("client_id", "")
     redirect_uri = body.get("redirect_uri", "")
     code_verifier = body.get("code_verifier", "")
     resource = body.get("resource", "")
+    requested_scope = body.get("scope", "")
 
-    if grant_type != "authorization_code":
+    if grant_type not in {"authorization_code", "refresh_token"}:
         return JSONResponse(
             {"error": "unsupported_grant_type"},
             status_code=400,
         )
 
-    if not code:
-        return JSONResponse({"error": "invalid_request", "error_description": "code is required"}, status_code=400)
-
-    # Look up the authorization code
     r = _get_valkey()
-    code_raw = r.get(f"oauth:code:{code}")
-    if not code_raw:
+    if grant_type == "authorization_code":
+        if not code:
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "code is required"},
+                status_code=400,
+            )
+
+        code_raw = r.get(f"oauth:code:{code}")
+        if not code_raw:
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"},
+                status_code=400,
+            )
+
+        r.delete(f"oauth:code:{code}")
+        code_data = json.loads(code_raw)
+
+        if redirect_uri and redirect_uri != code_data["redirect_uri"]:
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
+                status_code=400,
+            )
+
+        if code_data.get("client_id") and client_id and client_id != code_data["client_id"]:
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "client_id mismatch"},
+                status_code=400,
+            )
+
+        if resource and resource != code_data.get("resource", _mcp_resource_url(request)):
+            return JSONResponse(
+                {"error": "invalid_target", "error_description": "resource mismatch"},
+                status_code=400,
+            )
+
+        if code_data.get("code_challenge"):
+            if not code_verifier:
+                return JSONResponse(
+                    {"error": "invalid_request", "error_description": "code_verifier is required"},
+                    status_code=400,
+                )
+            digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+            computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+            if computed != code_data["code_challenge"]:
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "code_verifier validation failed"},
+                    status_code=400,
+                )
+
+        granted_scope = code_data.get("scope", DEFAULT_OAUTH_SCOPE)
+        return _token_response(
+            api_key=code_data["api_key"],
+            client_id=code_data.get("client_id", ""),
+            scope=granted_scope,
+            resource=code_data.get("resource", _mcp_resource_url(request)),
+            include_refresh_token=_refresh_token_requested(granted_scope),
+        )
+
+    if not refresh_token:
         return JSONResponse(
-            {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"},
+            {"error": "invalid_request", "error_description": "refresh_token is required"},
             status_code=400,
         )
 
-    # Delete immediately to prevent reuse
-    r.delete(f"oauth:code:{code}")
-    code_data = json.loads(code_raw)
-
-    # Verify redirect_uri matches
-    if redirect_uri and redirect_uri != code_data["redirect_uri"]:
+    refresh_raw = r.get(_refresh_token_key(refresh_token))
+    if not refresh_raw:
         return JSONResponse(
-            {"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
+            {"error": "invalid_grant", "error_description": "Invalid or expired refresh token"},
             status_code=400,
         )
 
-    if code_data.get("client_id") and client_id and client_id != code_data["client_id"]:
+    refresh_data = json.loads(refresh_raw)
+
+    if refresh_data.get("client_id") and client_id and client_id != refresh_data["client_id"]:
         return JSONResponse(
             {"error": "invalid_grant", "error_description": "client_id mismatch"},
             status_code=400,
         )
 
-    if resource and resource != code_data.get("resource", _mcp_resource_url(request)):
+    if resource and resource != refresh_data.get("resource", _mcp_resource_url(request)):
         return JSONResponse(
             {"error": "invalid_target", "error_description": "resource mismatch"},
             status_code=400,
         )
 
-    # Verify PKCE code_challenge if it was provided during authorization
-    if code_data.get("code_challenge"):
-        if not code_verifier:
-            return JSONResponse(
-                {"error": "invalid_request", "error_description": "code_verifier is required"},
-                status_code=400,
-            )
-        # S256: BASE64URL(SHA256(code_verifier)) == code_challenge
-        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-        import base64
-        computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-        if computed != code_data["code_challenge"]:
-            return JSONResponse(
-                {"error": "invalid_grant", "error_description": "code_verifier validation failed"},
-                status_code=400,
-            )
+    scope_error = _validate_requested_scopes(requested_scope or None)
+    if scope_error:
+        return JSONResponse(
+            {"error": "invalid_scope", "error_description": scope_error},
+            status_code=400,
+        )
 
-    return JSONResponse({
-        "access_token": code_data["api_key"],
-        "token_type": "Bearer",
-        "scope": code_data.get("scope", " ".join(SUPPORTED_SCOPES)),
-    })
+    original_scope_set = set(_parse_scope_param(refresh_data.get("scope", DEFAULT_OAUTH_SCOPE)))
+    if requested_scope:
+        requested_scope_set = set(_parse_scope_param(requested_scope))
+        if not requested_scope_set.issubset(original_scope_set):
+            return JSONResponse(
+                {"error": "invalid_scope", "error_description": "Requested scope exceeds original grant"},
+                status_code=400,
+            )
+        granted_scope = requested_scope
+    else:
+        granted_scope = refresh_data.get("scope", DEFAULT_OAUTH_SCOPE)
+
+    r.expire(_refresh_token_key(refresh_token), OAUTH_REFRESH_TOKEN_TTL)
+    return _token_response(
+        api_key=refresh_data["api_key"],
+        client_id=refresh_data.get("client_id", ""),
+        scope=granted_scope,
+        resource=refresh_data.get("resource", _mcp_resource_url(request)),
+        include_refresh_token=True,
+        refresh_token=refresh_token,
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────
@@ -567,7 +704,9 @@ def _get_or_create_api_key(user_sub: str, email: str) -> str | None:
                 VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (user_sub, email, "Claude MCP", key_hash, prefix, plan))
+            key_id = cur.fetchone()[0]
             conn.commit()
+            _get_valkey().setex(f"oauth:rawkey:{key_id}", OAUTH_REFRESH_TOKEN_TTL, raw)
 
             return raw
     except Exception as e:
