@@ -7,6 +7,7 @@ import { PricingPage } from "@/pages/PricingPage";
 import { CardSetupPage } from "@/pages/CardSetupPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { DocsPage } from "@/pages/DocsPage";
+import { InteractivePage } from "@/pages/InteractivePage";
 
 export default function App() {
   const { isLoading } = useAuth0();
@@ -48,6 +49,14 @@ export default function App() {
           element={
             <RequireAuth>
               <CardSetupPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="interactive"
+          element={
+            <RequireAuth>
+              <InteractivePage />
             </RequireAuth>
           }
         />

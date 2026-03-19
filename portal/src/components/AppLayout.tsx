@@ -7,6 +7,7 @@ import { Button } from "@/components/Button";
 const navLinks = [
   { to: "/usage", label: "Usage & Billing", auth: true },
   { to: "/api-keys", label: "API Keys", auth: true },
+  { to: "/interactive", label: "Interactive", auth: true },
   { to: "/pricing", label: "Plans & Pricing", auth: false },
   { to: "/docs", label: "API Reference", auth: false },
 ];

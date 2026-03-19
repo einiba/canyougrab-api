@@ -25,6 +25,7 @@ from billing import billing_router, stripe_router
 from antifraud import antifraud_router
 from oauth import router as oauth_router
 from session import router as session_router
+from portal import router as portal_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ app.include_router(stripe_router)
 app.include_router(antifraud_router)
 app.include_router(oauth_router)
 app.include_router(session_router)
+app.include_router(portal_router)
 
 
 # ── Rate limiting via Valkey ───────────────────────────────────────
@@ -115,20 +117,18 @@ POLL_INTERVAL = 0.3   # seconds between Valkey polls
 POLL_TIMEOUT = 45.0   # max seconds to wait for results (increased for WHOIS lookups)
 
 
-@app.post('/api/check/bulk')
-async def api_check_bulk(
-    request: Request,
-    body: dict = Body(...),
-    user: APIKeyUser = Depends(api_key_auth),
-    verbose: bool = Query(False, description='Include internal timing and debug fields'),
+async def do_bulk_check(
+    consumer: str,
+    plan: str,
+    domains: list[str],
+    client_ip: str,
+    verbose: bool = False,
 ):
-    """Check availability of up to 100 domains. Holds connection open until results are ready."""
-    domains = body.get('domains', [])
-    if not isinstance(domains, list) or not domains:
-        return JSONResponse({'error': 'Provide a domains array'}, status_code=400)
+    """Shared bulk-check logic: rate limit, quota, enqueue job, long-poll for results.
 
-    consumer = user.consumer_id
-    plan = user.plan
+    Returns a dict or JSONResponse.  Called by both /api/check/bulk and
+    /api/portal/check/bulk.
+    """
     plan_info = get_plan(plan)
 
     # Per-plan domain cap
@@ -142,7 +142,6 @@ async def api_check_bulk(
     _check_rate_limit(consumer, plan)
 
     # IP-based rate limiting (anti-abuse)
-    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip()
     if client_ip:
         _check_ip_rate_limit(client_ip)
 
@@ -206,6 +205,22 @@ async def api_check_bulk(
         'error': 'Processing timeout',
         'message': 'Results were not ready within 45 seconds. Please retry.',
     }, status_code=504)
+
+
+@app.post('/api/check/bulk')
+async def api_check_bulk(
+    request: Request,
+    body: dict = Body(...),
+    user: APIKeyUser = Depends(api_key_auth),
+    verbose: bool = Query(False, description='Include internal timing and debug fields'),
+):
+    """Check availability of up to 100 domains. Holds connection open until results are ready."""
+    domains = body.get('domains', [])
+    if not isinstance(domains, list) or not domains:
+        return JSONResponse({'error': 'Provide a domains array'}, status_code=400)
+
+    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip()
+    return await do_bulk_check(user.consumer_id, user.plan, domains, client_ip, verbose)
 
 
 # ── Other API routes ──────────────────────────────────────────────
