@@ -6,18 +6,52 @@ import { API_BASE } from "@/config";
 
 interface CheckResult {
   domain: string;
-  available: boolean;
+  available: boolean | null;
 }
 
 const EXAMPLE_DOMAINS = "myawesomestartup.com\nquicklaunch.io\nbuildfast.dev";
 
 type CodeLang = "curl" | "python" | "javascript";
+type AvailabilityState = "available" | "taken" | "inconclusive";
+
+function getAvailabilityState(available: boolean | null): AvailabilityState {
+  if (available === true) return "available";
+  if (available === false) return "taken";
+  return "inconclusive";
+}
+
+const RESULT_STYLES: Record<
+  AvailabilityState,
+  { row: string; icon: string; badge: string; label: string; symbol: string }
+> = {
+  available: {
+    row: "opacity-100 translate-y-0 border-primary/25 bg-card",
+    icon: "text-primary",
+    badge: "bg-primary/12 text-primary",
+    label: "Available",
+    symbol: "\u2713",
+  },
+  taken: {
+    row: "opacity-100 translate-y-0 border-destructive/15 bg-card",
+    icon: "text-destructive",
+    badge: "bg-destructive/12 text-destructive",
+    label: "Taken",
+    symbol: "\u2717",
+  },
+  inconclusive: {
+    row: "opacity-100 translate-y-0 border-amber-500/25 bg-card",
+    icon: "text-amber-600",
+    badge: "bg-amber-500/12 text-amber-600",
+    label: "Inconclusive",
+    symbol: "?",
+  },
+};
 
 function getCodeSnippet(domains: string[], lang: CodeLang): string {
   const list = domains.map((d) => `"${d}"`).join(", ");
   switch (lang) {
     case "curl":
-      return `curl -X POST https://api.canyougrab.it/api/check/bulk \\
+      return `curl -X POST ${API_BASE}/api/check/bulk \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -d '{"domains": [${list}]}'`;
@@ -25,13 +59,13 @@ function getCodeSnippet(domains: string[], lang: CodeLang): string {
       return `import requests
 
 res = requests.post(
-    "https://api.canyougrab.it/api/check/bulk",
+    "${API_BASE}/api/check/bulk",
     headers={"Authorization": "Bearer YOUR_API_KEY"},
     json={"domains": [${list}]},
 )
 print(res.json()["results"])`;
     case "javascript":
-      return `const res = await fetch("https://api.canyougrab.it/api/check/bulk", {
+      return `const res = await fetch("${API_BASE}/api/check/bulk", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -132,7 +166,7 @@ export function InteractivePage() {
         }
 
         const mapped: CheckResult[] = (data.results ?? []).map(
-          (r: { domain: string; available: boolean }) => ({
+          (r: { domain: string; available: boolean | null }) => ({
             domain: r.domain,
             available: r.available,
           }),
@@ -203,46 +237,33 @@ export function InteractivePage() {
       {/* Results */}
       {results.length > 0 && (
         <div className="space-y-3">
-          {results.map((r, i) => (
-            <div
-              key={r.domain}
-              className={`flex items-center gap-4 px-5 py-3.5 rounded-lg border transition-all duration-300 ${
-                i < visibleCount
-                  ? r.available
-                    ? "opacity-100 translate-y-0 border-primary/25 bg-card"
-                    : "opacity-100 translate-y-0 border-destructive/15 bg-card"
-                  : "opacity-0 translate-y-2 border-border bg-card"
-              }`}
-            >
-              <span
-                className={`text-lg font-bold ${
-                  i < visibleCount
-                    ? r.available
-                      ? "text-primary"
-                      : "text-destructive"
-                    : ""
+          {results.map((r, i) => {
+            const state = getAvailabilityState(r.available);
+            const style = RESULT_STYLES[state];
+
+            return (
+              <div
+                key={r.domain}
+                className={`flex items-center gap-4 px-5 py-3.5 rounded-lg border transition-all duration-300 ${
+                  i < visibleCount ? style.row : "opacity-0 translate-y-2 border-border bg-card"
                 }`}
               >
-                {i < visibleCount ? (r.available ? "\u2713" : "\u2717") : ""}
-              </span>
-              <span className="font-mono text-sm flex-1">{r.domain}</span>
-              <span
-                className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                  i < visibleCount
-                    ? r.available
-                      ? "bg-primary/12 text-primary"
-                      : "bg-destructive/12 text-destructive"
-                    : ""
-                }`}
-              >
-                {i < visibleCount
-                  ? r.available
-                    ? "Available"
-                    : "Taken"
-                  : ""}
-              </span>
-            </div>
-          ))}
+                <span
+                  className={`text-lg font-bold ${i < visibleCount ? style.icon : ""}`}
+                >
+                  {i < visibleCount ? style.symbol : ""}
+                </span>
+                <span className="font-mono text-sm flex-1">{r.domain}</span>
+                <span
+                  className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                    i < visibleCount ? style.badge : ""
+                  }`}
+                >
+                  {i < visibleCount ? style.label : ""}
+                </span>
+              </div>
+            );
+          })}
 
           {/* After section: toggles */}
           {visibleCount >= results.length && (

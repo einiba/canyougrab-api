@@ -16,7 +16,9 @@ import json
 import logging
 import os
 import secrets
+import time
 import urllib.parse
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -35,9 +37,23 @@ AUTH0_CLIENT_SECRET = os.environ.get("AUTH0_CLIENT_SECRET", "")
 AUTH0_AUDIENCE = "https://api.canyougrab.it"
 
 # OAuth server configuration
-OAUTH_ISSUER = os.environ.get("OAUTH_ISSUER", "https://api.canyougrab.it")
+OAUTH_ISSUER_OVERRIDE = os.environ.get("OAUTH_ISSUER", "").rstrip("/")
 AUTH_CODE_TTL = 300  # 5 minutes
 OAUTH_SESSION_TTL = 600  # 10 minutes
+OAUTH_CLIENT_TTL = int(os.environ.get("OAUTH_CLIENT_TTL", str(30 * 24 * 60 * 60)))
+OAUTH_RESOURCE_OVERRIDE = os.environ.get("OAUTH_RESOURCE", "").rstrip("/")
+PROTECTED_RESOURCE_METADATA_URL_OVERRIDE = os.environ.get(
+    "OAUTH_PROTECTED_RESOURCE_METADATA_URL",
+    "",
+).rstrip("/")
+RESOURCE_DOCUMENTATION_URL_OVERRIDE = os.environ.get(
+    "OAUTH_RESOURCE_DOCUMENTATION_URL",
+    "",
+).rstrip("/")
+DEFAULT_PUBLIC_ISSUER = "https://api.canyougrab.it"
+DEFAULT_PORTAL_DOCS_URL = "https://portal.canyougrab.it/docs"
+DEFAULT_DEV_PORTAL_DOCS_URL = "https://dev-portal.canyougrab.it/docs"
+SUPPORTED_SCOPES = ["domains.read", "account.read"]
 
 
 def _get_valkey():
@@ -45,19 +61,169 @@ def _get_valkey():
     return get_valkey()
 
 
+def _get_registered_client(client_id: str) -> dict[str, Any] | None:
+    if not client_id:
+        return None
+
+    raw = _get_valkey().get(f"oauth:client:{client_id}")
+    return json.loads(raw) if raw else None
+
+
+def _save_registered_client(client_id: str, data: dict[str, Any]) -> None:
+    _get_valkey().setex(
+        f"oauth:client:{client_id}",
+        OAUTH_CLIENT_TTL,
+        json.dumps(data),
+    )
+
+
+def _parse_scope_param(raw_scope: str | None) -> list[str]:
+    if not raw_scope:
+        return []
+    return [scope for scope in raw_scope.split() if scope]
+
+
+def _validate_requested_scopes(raw_scope: str | None) -> str | None:
+    scopes = _parse_scope_param(raw_scope)
+    invalid = [scope for scope in scopes if scope not in SUPPORTED_SCOPES]
+    if invalid:
+        return f"Unsupported scope(s): {' '.join(invalid)}"
+    return None
+
+
+def _request_origin(request: Request | None = None) -> str:
+    if request is not None:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        forwarded_host = request.headers.get("x-forwarded-host", "")
+        scheme = forwarded_proto.split(",", 1)[0].strip() or request.url.scheme or "https"
+        host = (
+            forwarded_host.split(",", 1)[0].strip()
+            or request.headers.get("host", "").split(",", 1)[0].strip()
+            or request.url.netloc
+        )
+        if host:
+            return f"{scheme}://{host}"
+    return OAUTH_ISSUER_OVERRIDE or DEFAULT_PUBLIC_ISSUER
+
+
+def _oauth_issuer(request: Request | None = None) -> str:
+    return _request_origin(request)
+
+
+def _mcp_resource_url(request: Request | None = None) -> str:
+    return OAUTH_RESOURCE_OVERRIDE or f"{_oauth_issuer(request)}/mcp"
+
+
+def _protected_resource_metadata_url(request: Request | None = None) -> str:
+    return (
+        PROTECTED_RESOURCE_METADATA_URL_OVERRIDE
+        or f"{_oauth_issuer(request)}/.well-known/oauth-protected-resource/mcp"
+    )
+
+
+def _resource_documentation_url(request: Request | None = None) -> str:
+    if RESOURCE_DOCUMENTATION_URL_OVERRIDE:
+        return RESOURCE_DOCUMENTATION_URL_OVERRIDE
+    host = urllib.parse.urlparse(_oauth_issuer(request)).netloc.lower()
+    if host.startswith("dev-") or host.startswith("dev."):
+        return DEFAULT_DEV_PORTAL_DOCS_URL
+    return DEFAULT_PORTAL_DOCS_URL
+
+
+def _protected_resource_metadata(request: Request | None = None) -> dict[str, Any]:
+    return {
+        "resource": _mcp_resource_url(request),
+        "authorization_servers": [_oauth_issuer(request)],
+        "scopes_supported": SUPPORTED_SCOPES,
+        "bearer_methods_supported": ["header"],
+        "resource_name": "CanYouGrab.it MCP",
+        "resource_documentation": _resource_documentation_url(request),
+    }
+
+
 # ── OAuth Metadata ────────────────────────────────────────────────
 
 @router.get("/.well-known/oauth-authorization-server")
-def oauth_metadata():
+def oauth_metadata(request: Request):
     """RFC 8414 OAuth 2.0 Authorization Server Metadata."""
+    issuer = _oauth_issuer(request)
     return {
-        "issuer": OAUTH_ISSUER,
-        "authorization_endpoint": f"{OAUTH_ISSUER}/oauth/authorize",
-        "token_endpoint": f"{OAUTH_ISSUER}/oauth/token",
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}/oauth/authorize",
+        "token_endpoint": f"{issuer}/oauth/token",
+        "registration_endpoint": f"{issuer}/oauth/register",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": SUPPORTED_SCOPES,
+    }
+
+
+@router.get("/.well-known/oauth-protected-resource")
+def protected_resource_metadata_root(request: Request):
+    """Compatibility route for clients that probe the root well-known path."""
+    return _protected_resource_metadata(request)
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp")
+def protected_resource_metadata_mcp(request: Request):
+    """RFC 9728 OAuth 2.0 Protected Resource Metadata for the /mcp resource."""
+    return _protected_resource_metadata(request)
+
+
+@router.post("/oauth/register")
+async def register_client(request: Request):
+    """Minimal Dynamic Client Registration endpoint for public OAuth clients."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    redirect_uris = payload.get("redirect_uris") or []
+    if not isinstance(redirect_uris, list) or not redirect_uris:
+        return JSONResponse(
+            {
+                "error": "invalid_client_metadata",
+                "error_description": "redirect_uris must be a non-empty array",
+            },
+            status_code=400,
+        )
+
+    if any(not isinstance(uri, str) or not uri for uri in redirect_uris):
+        return JSONResponse(
+            {
+                "error": "invalid_redirect_uri",
+                "error_description": "Each redirect URI must be a non-empty string",
+            },
+            status_code=400,
+        )
+
+    raw_scope = payload.get("scope")
+    scope_error = _validate_requested_scopes(raw_scope)
+    if scope_error:
+        return JSONResponse(
+            {"error": "invalid_scope", "error_description": scope_error},
+            status_code=400,
+        )
+
+    client_id = "cgpt_" + secrets.token_urlsafe(24)
+    issued_at = int(time.time())
+    record = {
+        "client_id": client_id,
+        "client_name": payload.get("client_name", "CanYouGrab OAuth client"),
+        "redirect_uris": redirect_uris,
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+        "scope": raw_scope or " ".join(SUPPORTED_SCOPES),
+        "created_at": issued_at,
+    }
+    _save_registered_client(client_id, record)
+
+    return {
+        **record,
+        "client_id_issued_at": issued_at,
     }
 
 
@@ -67,12 +233,17 @@ def oauth_metadata():
 def authorize(request: Request):
     """Start the OAuth authorization flow. Redirects to Auth0 for login."""
     params = request.query_params
+    oauth_issuer = _oauth_issuer(request)
+    mcp_resource_url = _mcp_resource_url(request)
 
+    client_id = params.get("client_id", "")
     redirect_uri = params.get("redirect_uri", "")
     state = params.get("state", "")
     code_challenge = params.get("code_challenge", "")
     code_challenge_method = params.get("code_challenge_method", "")
     response_type = params.get("response_type", "")
+    requested_scope = params.get("scope", " ".join(SUPPORTED_SCOPES))
+    resource = params.get("resource", mcp_resource_url)
 
     if response_type != "code":
         return JSONResponse(
@@ -86,27 +257,62 @@ def authorize(request: Request):
             status_code=400,
         )
 
+    scope_error = _validate_requested_scopes(requested_scope)
+    if scope_error:
+        return JSONResponse(
+            {"error": "invalid_scope", "error_description": scope_error},
+            status_code=400,
+        )
+
+    if resource != mcp_resource_url:
+        return JSONResponse(
+            {
+                "error": "invalid_target",
+                "error_description": f"Only resource={mcp_resource_url} is supported",
+            },
+            status_code=400,
+        )
+
+    registered_client = _get_registered_client(client_id) if client_id else None
+    if client_id and not registered_client:
+        return JSONResponse(
+            {"error": "invalid_client", "error_description": "Unknown client_id"},
+            status_code=400,
+        )
+
+    if registered_client and redirect_uri not in registered_client.get("redirect_uris", []):
+        return JSONResponse(
+            {
+                "error": "invalid_request",
+                "error_description": "redirect_uri must match the registered client metadata",
+            },
+            status_code=400,
+        )
+
     # Store OAuth session in Valkey
     session_id = secrets.token_urlsafe(32)
     session_data = {
+        "client_id": client_id,
         "redirect_uri": redirect_uri,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
+        "scope": requested_scope,
+        "resource": resource,
     }
 
     r = _get_valkey()
     r.setex(f"oauth:session:{session_id}", OAUTH_SESSION_TTL, json.dumps(session_data))
 
     # Build the callback URL for Auth0 to redirect back to us
-    our_callback = f"{OAUTH_ISSUER}/oauth/callback"
+    our_callback = f"{oauth_issuer}/oauth/callback"
 
     # Redirect to Auth0 with our session_id in the state
     auth0_params = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": AUTH0_CLIENT_ID,
         "redirect_uri": our_callback,
-        "scope": "openid email",
+        "scope": "openid email profile",
         "audience": AUTH0_AUDIENCE,
         "state": session_id,
     })
@@ -145,7 +351,8 @@ async def callback(request: Request):
     r.delete(f"oauth:session:{session_id}")
 
     # Exchange Auth0 code for tokens
-    our_callback = f"{OAUTH_ISSUER}/oauth/callback"
+    oauth_issuer = _oauth_issuer(request)
+    our_callback = f"{oauth_issuer}/oauth/callback"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             token_resp = await client.post(
@@ -213,9 +420,12 @@ async def callback(request: Request):
     auth_code = secrets.token_urlsafe(48)
     code_data = {
         "api_key": api_key,
+        "client_id": session.get("client_id", ""),
         "redirect_uri": session["redirect_uri"],
         "code_challenge": session.get("code_challenge", ""),
         "code_challenge_method": session.get("code_challenge_method", ""),
+        "scope": session.get("scope", " ".join(SUPPORTED_SCOPES)),
+        "resource": session.get("resource", _mcp_resource_url(request)),
     }
     r.setex(f"oauth:code:{auth_code}", AUTH_CODE_TTL, json.dumps(code_data))
 
@@ -245,8 +455,10 @@ async def token(request: Request):
 
     grant_type = body.get("grant_type", "")
     code = body.get("code", "")
+    client_id = body.get("client_id", "")
     redirect_uri = body.get("redirect_uri", "")
     code_verifier = body.get("code_verifier", "")
+    resource = body.get("resource", "")
 
     if grant_type != "authorization_code":
         return JSONResponse(
@@ -277,6 +489,18 @@ async def token(request: Request):
             status_code=400,
         )
 
+    if code_data.get("client_id") and client_id and client_id != code_data["client_id"]:
+        return JSONResponse(
+            {"error": "invalid_grant", "error_description": "client_id mismatch"},
+            status_code=400,
+        )
+
+    if resource and resource != code_data.get("resource", _mcp_resource_url(request)):
+        return JSONResponse(
+            {"error": "invalid_target", "error_description": "resource mismatch"},
+            status_code=400,
+        )
+
     # Verify PKCE code_challenge if it was provided during authorization
     if code_data.get("code_challenge"):
         if not code_verifier:
@@ -297,6 +521,7 @@ async def token(request: Request):
     return JSONResponse({
         "access_token": code_data["api_key"],
         "token_type": "Bearer",
+        "scope": code_data.get("scope", " ".join(SUPPORTED_SCOPES)),
     })
 
 
