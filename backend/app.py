@@ -4,9 +4,12 @@ Includes Valkey domain cache, API key auth, rate limiting, billing, and key mana
 """
 
 import asyncio
+import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, Body, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +32,20 @@ from portal import router as portal_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
+LOCAL_REPO_ROOT = Path(__file__).resolve().parent.parent
+SERVER_REPO_ROOT = Path(os.environ.get('CANYOUGRAB_REPO_ROOT', '/opt/canyougrab-repo'))
+
+
+def _resolve_repo_file(*relative_parts: str) -> Path:
+    for root in (LOCAL_REPO_ROOT, SERVER_REPO_ROOT):
+        candidate = root.joinpath(*relative_parts)
+        if candidate.exists():
+            return candidate
+    return LOCAL_REPO_ROOT.joinpath(*relative_parts)
+
+
+OPENAPI_TEMPLATE_PATH = _resolve_repo_file('portal', 'config', 'routes.oas.json')
+MCP_SERVER_METADATA_PATH = _resolve_repo_file('mcp-server', 'server.json')
 
 app = FastAPI(title='CanYouGrab API', version='7.0.0')
 
@@ -47,6 +64,50 @@ app.include_router(antifraud_router)
 app.include_router(oauth_router)
 app.include_router(session_router)
 app.include_router(portal_router)
+
+
+def _request_origin(request: Request) -> str:
+    forwarded_proto = request.headers.get('x-forwarded-proto', '')
+    forwarded_host = request.headers.get('x-forwarded-host', '')
+    scheme = forwarded_proto.split(',', 1)[0].strip() or request.url.scheme or 'https'
+    host = (
+        forwarded_host.split(',', 1)[0].strip()
+        or request.headers.get('host', '').split(',', 1)[0].strip()
+        or request.url.netloc
+    )
+    return f'{scheme}://{host}' if host else str(request.base_url).rstrip('/')
+
+
+def _load_json_file(path: Path) -> dict:
+    with path.open('r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+@app.get('/openapi.json')
+def openapi_document(request: Request):
+    """Serve OpenAPI with a host-aware server URL for dev and prod."""
+    data = _load_json_file(OPENAPI_TEMPLATE_PATH)
+    data['servers'] = [{'url': _request_origin(request)}]
+    return JSONResponse(data)
+
+
+@app.get('/server.json')
+def mcp_server_metadata(request: Request):
+    """Serve MCP server metadata with a host-aware remote URL."""
+    data = _load_json_file(MCP_SERVER_METADATA_PATH)
+    origin = _request_origin(request)
+
+    remotes = []
+    for remote in data.get('remotes', []):
+        remote_copy = dict(remote)
+        if remote_copy.get('type') == 'streamable-http':
+            remote_copy['url'] = f'{origin}/mcp'
+        remotes.append(remote_copy)
+
+    if remotes:
+        data['remotes'] = remotes
+
+    return JSONResponse(data)
 
 
 # ── Rate limiting via Valkey ───────────────────────────────────────
