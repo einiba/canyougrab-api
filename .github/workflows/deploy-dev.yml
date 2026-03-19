@@ -14,4 +14,15 @@ jobs:
           host: ${{ secrets.DEV_DEPLOY_HOST }}
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: /opt/deploy.sh dev
+          script_stop: true
+          script: |
+            set -e
+            REF=dev
+            REPO_DIR=/opt/canyougrab-repo
+
+            cd "$REPO_DIR"
+            git fetch origin
+            git checkout "$REF"
+            git pull origin "$REF" 2>/dev/null || true
+
+            bash "$REPO_DIR/scripts/deploy-host.sh"

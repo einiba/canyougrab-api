@@ -280,7 +280,8 @@ git tag v1.0.5 && git push origin v1.0.5
 **Pipeline** (`.github/workflows/deploy.yml`):
 1. GitHub Actions triggers on `v*` tag push
 2. SSH into production server (`DEPLOY_HOST` secret) using `DEPLOY_SSH_KEY`
-3. Runs `/opt/deploy.sh <tag>` on the server (e.g., `/opt/deploy.sh v1.0.5`)
+3. Bootstraps the target ref on the server (`git fetch` + `git checkout <tag>`)
+4. Runs the repo-managed deploy script: `/opt/canyougrab-repo/scripts/deploy-host.sh`
 
 ### Dev Deploy
 
@@ -293,17 +294,20 @@ git push origin dev
 **Pipeline** (`.github/workflows/deploy-dev.yml`):
 1. GitHub Actions triggers on push to `dev`
 2. SSH into dev server (`DEV_DEPLOY_HOST` secret) using same `DEPLOY_SSH_KEY`
-3. Runs `/opt/deploy.sh dev` on the server
+3. Bootstraps the `dev` ref on the server (`git fetch` + `git checkout dev`)
+4. Runs the repo-managed deploy script: `/opt/canyougrab-repo/scripts/deploy-host.sh`
 
-### Server-Side Deploy Script
+### Repo-Managed Host Deploy Script
 
-Both pipelines call `/opt/deploy.sh` on the respective server. This script (on the server, not in the repo) handles:
-- `git fetch` + `git checkout` to the specified tag or branch
+Both pipelines use a small inline SSH bootstrap to update `/opt/canyougrab-repo` to the target ref, then call `scripts/deploy-host.sh` from that checked-out revision. The repo-managed deploy script handles:
 - `pip install -r requirements.txt` for backend dependencies
-- Reinstall or refresh the `mcp-server` package/runtime when the server also hosts `/mcp`
+- `rsync` of backend, portal, and MCP source trees into their runtime directories
+- Reinstall or refresh the `mcp-server` package/runtime when the host also runs `canyougrab-mcp.service`
 - Restart of FastAPI (uvicorn), worker, and MCP services via systemd
 
 If `/mcp` is served by the same host as the API, backend-only deploys are not enough. The MCP service must be updated and restarted during the same deploy or the OAuth metadata and live MCP behavior can drift apart.
+
+An existing `/opt/deploy.sh` can still be kept as a manual compatibility shim if desired, but the automated pipeline should treat the repo copy of `scripts/deploy-host.sh` as the source of truth.
 
 ### Branching Strategy
 
@@ -418,4 +422,5 @@ Each server runs at least two systemd-managed processes:
 2. **Worker** (worker.py): Processes domain check jobs from the Valkey queue
 3. **MCP server** (`mcp-server-canyougrab --streamable-http`, if `/mcp` is hosted on this server): Serves remote MCP clients and OAuth-aware tool flows
 
-All active services on the host must be managed via systemd and restarted by `/opt/deploy.sh` during deployments.
+All active services on the host must be managed via systemd and restarted during deployments.
+All automated deploys should route through `scripts/deploy-host.sh`, which is responsible for restarting whichever of these services are installed on the host.
