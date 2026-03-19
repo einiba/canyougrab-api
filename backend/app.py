@@ -83,7 +83,7 @@ def _load_json_file(path: Path) -> dict:
         return json.load(f)
 
 
-@app.get('/openapi.json')
+@app.get('/api-reference/openapi.json')
 def openapi_document(request: Request):
     """Serve OpenAPI with a host-aware server URL for dev and prod."""
     data = _load_json_file(OPENAPI_TEMPLATE_PATH)
