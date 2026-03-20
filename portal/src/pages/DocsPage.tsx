@@ -26,7 +26,10 @@ export function DocsPage() {
 
   return (
     <div className="-mx-4 -mt-8" style={{ minHeight: "calc(100vh - 3.5rem)" }}>
-      <div ref={containerRef} data-api-url="/openapi.json" />
+      <div
+        ref={containerRef}
+        data-api-url={`${window.location.origin}/openapi.json`}
+      />
     </div>
   );
 }
