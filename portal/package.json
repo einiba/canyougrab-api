@@ -10,8 +10,6 @@
   },
   "dependencies": {
     "@auth0/auth0-react": "^2",
-    "@scalar/api-reference-react": "^0.9",
-    "@scalar/openapi-parser": "^0.25.5",
     "react": "^19",
     "react-dom": "^19",
     "react-router": "^7"
