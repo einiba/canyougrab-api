@@ -403,6 +403,22 @@ npx zuplo dev        # Starts on port 9200
 
 Portal dev server hardcodes `API_BASE` to `https://api.canyougrab.it` in `portal/docs/src/config.ts`. To develop against a local backend, change this to `http://localhost:8000`.
 
+## SEO: .it TLD Geo-Targeting Requirements
+
+Because canyougrab.it uses a `.it` country-code TLD (Italy), all user-facing HTML (portal, docs) must include signals that the content targets English speakers:
+
+1. **`<html lang="en">`** on every page.
+2. **Hreflang tags** in `<head>`:
+   ```html
+   <link rel="alternate" hreflang="en-US" href="{page_url}" />
+   <link rel="alternate" hreflang="en" href="{page_url}" />
+   <link rel="alternate" hreflang="x-default" href="{page_url}" />
+   ```
+3. **Canonical tag** — Self-referencing `<link rel="canonical" href="{page_url}" />`.
+4. **All content in English** — No Italian text on any page.
+
+This applies to the portal (`portal.canyougrab.it`), API docs, and any other publicly rendered HTML.
+
 ## Key Design Decisions
 
 - **Live DNS lookups**: Domain availability is checked via NS queries to a dedicated [Unbound recursive resolver](https://github.com/ericismaking/canyougrab-unbound). This gives real-time results (no 24-hour zone file lag), works for any TLD automatically, and avoids the operational complexity of daily batch zone file loading. Unbound caches aggressively (7 days for registered domains) so repeated queries are ~1ms.
