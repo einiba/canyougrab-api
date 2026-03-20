@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
+import { useNoIndex } from "@/hooks/useNoIndex";
 import { Button } from "@/components/Button";
 import { API_BASE } from "@/config";
 
@@ -145,6 +146,7 @@ function FreePlusUpgradeBanner({ onUpgrade, loading }: { onUpgrade: () => void; 
 }
 
 export function UsageDashboard() {
+  useNoIndex();
   const auth = useAuth();
   const { signRequest } = useSignRequest();
   const [data, setData] = useState<UsageData | null>(null);

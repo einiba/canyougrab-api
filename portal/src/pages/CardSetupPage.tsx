@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
+import { useNoIndex } from "@/hooks/useNoIndex";
 import { Button } from "@/components/Button";
 import { API_BASE, STRIPE_PUBLISHABLE_KEY } from "@/config";
 
@@ -25,6 +26,7 @@ function loadStripe(): Promise<any> {
 type Step = "loading" | "form" | "processing" | "success" | "error";
 
 export function CardSetupPage() {
+  useNoIndex();
   const auth = useAuth();
   const { signRequest } = useSignRequest();
   const [step, setStep] = useState<Step>("loading");

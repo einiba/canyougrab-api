@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
+import { useNoIndex } from "@/hooks/useNoIndex";
 import { Button } from "@/components/Button";
 import { API_BASE } from "@/config";
 
@@ -89,6 +90,7 @@ const TAB_LABELS: Record<CodeLang, string> = {
 const MAX_DOMAINS = 100;
 
 export function InteractivePage() {
+  useNoIndex();
   const auth = useAuth();
   const { signRequest } = useSignRequest();
 

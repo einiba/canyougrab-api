@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSignRequest } from "@/hooks/useSignRequest";
+import { useNoIndex } from "@/hooks/useNoIndex";
 import { Button } from "@/components/Button";
 import { API_BASE } from "@/config";
 import { getTurnstileToken } from "@/lib/turnstile";
@@ -15,6 +16,7 @@ interface ApiKey {
 }
 
 export function ApiKeysPage() {
+  useNoIndex();
   const { signRequest } = useSignRequest();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
