@@ -8,7 +8,7 @@ import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from valkey_client import claim_job, complete_job, fail_job
+from valkey_client import claim_job, complete_job, fail_job, get_valkey
 from dns_client import create_resolver
 from lookup import check_domain
 
@@ -61,6 +61,13 @@ def process_domain_job(job_key: str):
             results = [f.result() for f in futures]
 
         complete_job(job_id, results, queued_at=queued_at)
+
+        # Push processing time to metrics list for the exporter to consume
+        r = get_valkey()
+        response_time = r.hget(f'job:{job_id}', 'response_time_ms')
+        if response_time:
+            r.lpush('metrics:processing_times', response_time)
+            r.ltrim('metrics:processing_times', 0, 9999)  # cap at 10k entries
 
     except Exception as e:
         logger.exception('Error processing job %s', job_id[:8])

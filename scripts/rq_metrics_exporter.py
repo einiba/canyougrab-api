@@ -15,7 +15,7 @@ import logging
 import redis
 from rq import Queue, Worker
 from rq.job import JobStatus
-from prometheus_client import start_http_server, Gauge, Info
+from prometheus_client import start_http_server, Gauge, Histogram, Info
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +34,11 @@ workers_busy = Gauge('canyougrab_workers_busy', 'Number of RQ workers currently 
 failed_jobs = Gauge('canyougrab_failed_jobs_total', 'Number of jobs in the failed job registry')
 scheduled_jobs = Gauge('canyougrab_scheduled_jobs', 'Number of jobs in the scheduled registry')
 started_jobs = Gauge('canyougrab_started_jobs', 'Number of currently executing jobs')
+processing_time = Histogram(
+    'canyougrab_processing_time_ms',
+    'Job processing time in milliseconds (completed_at - queued_at)',
+    buckets=[100, 250, 500, 1000, 2500, 5000, 10000, 25000, 45000, 60000, 90000, 120000],
+)
 exporter_info = Info('canyougrab_rq_exporter', 'RQ metrics exporter metadata')
 
 
@@ -63,6 +68,16 @@ def collect_metrics(conn: redis.Redis, queue: Queue):
 
         started_registry = queue.started_job_registry
         started_jobs.set(len(started_registry))
+
+        # Drain processing times pushed by workers and observe into histogram
+        while True:
+            val = conn.rpop('metrics:processing_times')
+            if val is None:
+                break
+            try:
+                processing_time.observe(float(val))
+            except (ValueError, TypeError):
+                pass
 
     except redis.ConnectionError:
         logger.warning('Lost Valkey connection, will retry next cycle')
