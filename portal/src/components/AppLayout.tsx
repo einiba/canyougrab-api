@@ -3,6 +3,7 @@ import { NavLink, Outlet } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
 import { useSession } from "@/hooks/useSession";
 import { Button } from "@/components/Button";
+import { UserProfileDropdown } from "@/components/UserProfileDropdown";
 
 const navLinks = [
   { to: "/usage", label: "Usage & Billing", auth: true },
@@ -61,9 +62,7 @@ export function AppLayout() {
           </div>
           <div>
             {isPending ? null : isAuthenticated ? (
-              <Button variant="ghost" onClick={logout} className="text-sm">
-                Sign Out
-              </Button>
+              <UserProfileDropdown />
             ) : (
               <Button onClick={login} className="text-sm">
                 Sign In
