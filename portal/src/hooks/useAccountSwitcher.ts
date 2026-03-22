@@ -10,22 +10,30 @@ interface RememberedAccount {
 
 const STORAGE_KEY = "cygi_remembered_accounts";
 
-function getStoredAccounts(): RememberedAccount[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+// Cache the snapshot so useSyncExternalStore gets a stable reference
+let cachedRaw: string | null = null;
+let cachedAccounts: RememberedAccount[] = [];
+
+function getSnapshot(): RememberedAccount[] {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw !== cachedRaw) {
+    cachedRaw = raw;
+    try {
+      cachedAccounts = raw ? JSON.parse(raw) : [];
+    } catch {
+      cachedAccounts = [];
+    }
   }
+  return cachedAccounts;
 }
 
 function setStoredAccounts(accounts: RememberedAccount[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
-  // Notify subscribers
+  // Bust cache so next getSnapshot returns fresh data
+  cachedRaw = null;
   listeners.forEach((l) => l());
 }
 
-// Simple external store for cross-component reactivity
 const listeners = new Set<() => void>();
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -40,12 +48,12 @@ export function useAccountSwitcher() {
     logout: auth0Logout,
   } = useAuth0();
 
-  const accounts = useSyncExternalStore(subscribe, getStoredAccounts);
+  const accounts = useSyncExternalStore(subscribe, getSnapshot);
 
   // Persist current user to remembered accounts on login
   useEffect(() => {
     if (!isAuthenticated || !user?.sub) return;
-    const stored = getStoredAccounts();
+    const stored = getSnapshot();
     const exists = stored.find((a) => a.sub === user.sub);
     const entry: RememberedAccount = {
       sub: user.sub,
@@ -54,7 +62,14 @@ export function useAccountSwitcher() {
       pictureUrl: user.picture ?? "",
     };
     if (exists) {
-      // Update in case name/picture changed
+      // Only update if something actually changed
+      if (
+        exists.email === entry.email &&
+        exists.name === entry.name &&
+        exists.pictureUrl === entry.pictureUrl
+      ) {
+        return;
+      }
       setStoredAccounts(
         stored.map((a) => (a.sub === user.sub ? entry : a)),
       );
@@ -79,7 +94,7 @@ export function useAccountSwitcher() {
   }, [loginWithRedirect]);
 
   const removeAccount = useCallback((sub: string) => {
-    setStoredAccounts(getStoredAccounts().filter((a) => a.sub !== sub));
+    setStoredAccounts(getSnapshot().filter((a) => a.sub !== sub));
   }, []);
 
   const signOut = useCallback(() => {
