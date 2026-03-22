@@ -1,0 +1,15 @@
+[Unit]
+Description=CanYouGrab RQ Metrics Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=canyougrab
+EnvironmentFile=/etc/canyougrab/env
+WorkingDirectory=/opt/canyougrab/api
+ExecStart=/opt/canyougrab/venv/bin/python /opt/canyougrab-repo/scripts/rq_metrics_exporter.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

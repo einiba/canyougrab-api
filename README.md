@@ -39,10 +39,10 @@ Domain availability lookup API with subscription billing, built on FastAPI + DNS
          │
          ▼
 ┌─────────────────┐          ┌──────────────────────────────┐
-│  Worker Process  │──DNS──▶ │   Unbound Resolver            │
+│  RQ Worker       │──DNS──▶ │   Unbound Resolver            │
 │  (worker.py)     │          │   (dedicated droplet)         │
 │  ThreadPool(10)  │          │   NS queries via VPC          │
-│  BRPOP queue     │          └──────────────────────────────┘
+│  via RQ queue    │          └──────────────────────────────┘
 └─────────────────┘
                              ┌──────────────────────────────┐
          ───────────────────▶│   PostgreSQL                  │
@@ -63,8 +63,9 @@ zuplo/
 │   ├── email_utils.py          # Email normalization + disposable email detection
 │   ├── dns_client.py           # DNS-based domain availability checking via Unbound
 │   ├── queries.py              # PostgreSQL queries: usage tracking, auth, billing
-│   ├── valkey_client.py        # Redis/Valkey job queue client
-│   ├── worker.py               # Background job processor (ThreadPoolExecutor)
+│   ├── valkey_client.py        # Redis/Valkey job queue client (RQ-backed)
+│   ├── rq_tasks.py             # RQ task function: process_domain_job()
+│   ├── worker.py               # RQ worker process (ThreadPoolExecutor per job)
 │   ├── migrations/             # SQL migrations
 │   │   └── 001_free_tier_antifraud.sql
 │   └── requirements.txt        # Python dependencies
@@ -151,9 +152,9 @@ Client                    FastAPI                     Valkey                    
   │                          │── check monthly quota ──▶│ (PostgreSQL)             │                    │
   │                          │── record usage ─────────▶│ (PostgreSQL)             │                    │
   │                          │── create_job() ─────────▶│ HSET job:{uuid}          │                    │
-  │                          │                          │ LPUSH queue:jobs          │                    │
+  │                          │                          │ RQ enqueue (with retry)   │                    │
   │                          │                          │                          │                    │
-  │                          │                          │◀── BRPOP queue:jobs ─────│                    │
+  │                          │                          │◀── RQ Worker dequeues ───│                    │
   │                          │                          │                          │                    │
   │                          │                          │──── claim_job() ────────▶│                    │
   │                          │                          │                          │── ThreadPool(10)   │
@@ -243,7 +244,8 @@ PostgreSQL is used for authentication, usage tracking, and billing — not for d
 | Key Pattern | Type | Purpose | TTL |
 |-------------|------|---------|-----|
 | `job:{uuid}` | Hash | Job status, domains, results | 1 hour |
-| `queue:jobs` | List | FIFO job queue (BRPOP by worker) | — |
+| `rq:queue:canyougrab-jobs` | List | RQ job queue (managed by RQ) | — |
+| `rq:job:{uuid}` | Hash | RQ job metadata (retries, status) | Configurable |
 | `ratelimit:{consumer}:{YYYYMMDDHHmm}` | String | Per-minute rate limit counter (INCR) | 60s |
 
 ## Infrastructure
@@ -360,6 +362,19 @@ PORTAL_URL=https://portal.canyougrab.it
 
 # Worker
 BATCH_CONCURRENCY=10   # Thread pool size for domain checks
+VALKEY_QUEUE_NAME=canyougrab-jobs  # RQ queue name (default: canyougrab-jobs)
+
+# Monitoring (optional — only if monitoring stack is installed)
+SLACK_ALERTS_WEBHOOK_URL=  # Slack incoming webhook for Alertmanager
+RQ_METRICS_PORT=9122       # Prometheus metrics exporter port
+
+# Auto-scaler (optional — only on API host with autoscaler enabled)
+DO_API_TOKEN=              # DigitalOcean API token
+DO_WORKER_SNAPSHOT_ID=     # Snapshot ID for new worker droplets
+AUTOSCALER_MIN_WORKERS=1
+AUTOSCALER_MAX_WORKERS=5
+AUTOSCALER_SCALE_UP_THRESHOLD=50
+AUTOSCALER_SCALE_DOWN_IDLE_MINUTES=10
 ```
 
 ### GitHub Actions Secrets
@@ -423,8 +438,8 @@ This applies to the portal (`portal.canyougrab.it`), API docs, and any other pub
 
 - **Live DNS lookups**: Domain availability is checked via NS queries to a dedicated [Unbound recursive resolver](https://github.com/ericismaking/canyougrab-unbound). This gives real-time results (no 24-hour zone file lag), works for any TLD automatically, and avoids the operational complexity of daily batch zone file loading. Unbound caches aggressively (7 days for registered domains) so repeated queries are ~1ms.
 - **Nullable availability**: DNS has more failure modes than a database lookup. When Unbound returns SERVFAIL or times out, the API returns `available: null` instead of a potentially dangerous false positive. Consumers should treat `null` as "could not determine."
-- **Job queue for bulk checks**: The bulk endpoint uses a Valkey job queue + worker to parallelize DNS queries across a thread pool and avoid blocking the API event loop.
-- **Long-polling**: The bulk check endpoint holds the HTTP connection open (polling Valkey every 0.3s, up to 30s) rather than requiring clients to implement polling.
+- **Job queue for bulk checks**: The bulk endpoint uses RQ (Redis Queue) backed by Valkey to dispatch jobs with automatic retries (2 retries, 5s/30s backoff) and failed-job tracking. Workers parallelize DNS queries across a thread pool.
+- **Long-polling**: The bulk check endpoint holds the HTTP connection open (polling Valkey every 0.3s, up to 45s) rather than requiring clients to implement polling. Job results are stored in custom Valkey hashes (not RQ's built-in result storage) so the poll logic is independent of the queue framework.
 - **API keys with SHA-256 hashing**: Keys are hashed before storage (like passwords), so a database breach doesn't expose raw keys.
 - **Stripe metadata linking**: Stripe customers are linked to Auth0 users via `auth0_sub` metadata on the Stripe customer object, avoiding a separate mapping table.
 - **Usage double-tracking**: Both daily (`usage_log_daily`) and per-minute (`usage_log_minute`) usage are recorded for monthly quota and per-minute rate limiting respectively.
@@ -432,11 +447,22 @@ This applies to the portal (`portal.canyougrab.it`), API docs, and any other pub
 
 ## Processes on Servers
 
-Each server runs at least two systemd-managed processes:
+### Core services (every host)
 
 1. **FastAPI** (uvicorn): Serves all HTTP endpoints on port 8000
-2. **Worker** (worker.py): Processes domain check jobs from the Valkey queue
-3. **MCP server** (`mcp-server-canyougrab --streamable-http`, if `/mcp` is hosted on this server): Serves remote MCP clients and OAuth-aware tool flows
+2. **RQ Worker** (worker.py): Processes domain check jobs from the RQ queue
+3. **MCP server** (if `/mcp` is hosted on this server): Serves remote MCP clients
+
+### Monitoring stack (API host, optional)
+
+4. **Prometheus** (localhost:9090): Scrapes metrics, evaluates alert rules
+5. **Alertmanager** (localhost:9093): Routes alerts to Slack
+6. **redis_exporter** (localhost:9121): Exports Valkey metrics to Prometheus
+7. **RQ metrics exporter** (localhost:9122): Exports queue depth, worker count, failed jobs
+8. **Grafana** (localhost:3000, nginx-proxied): Dashboards for queue health
+9. **Auto-scaler** (optional): Scales worker droplets up/down via DO API
+
+Install the monitoring stack with: `sudo bash scripts/setup-monitoring.sh`
 
 All active services on the host must be managed via systemd and restarted during deployments.
 All automated deploys should route through `scripts/deploy-host.sh`, which is responsible for restarting whichever of these services are installed on the host.

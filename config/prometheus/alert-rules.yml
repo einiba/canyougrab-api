@@ -1,0 +1,38 @@
+groups:
+  - name: canyougrab-queue
+    rules:
+      - alert: QueueDepthHigh
+        expr: canyougrab_queue_depth > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth is {{ $value }} (threshold: 50)"
+          description: "The canyougrab job queue has had more than 50 pending jobs for over 2 minutes."
+
+      - alert: QueueDepthCritical
+        expr: canyougrab_queue_depth > 200
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue depth critical: {{ $value }}"
+          description: "The canyougrab job queue has exceeded 200 pending jobs. Auto-scaler should be responding."
+
+      - alert: NoWorkersRunning
+        expr: canyougrab_workers_active == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No RQ workers are running"
+          description: "Zero active RQ workers detected. Jobs are queuing without being processed."
+
+      - alert: FailedJobsIncreasing
+        expr: increase(canyougrab_failed_jobs_total[5m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} jobs failed in the last 5 minutes"
+          description: "A spike in failed jobs may indicate a downstream service issue (DNS, WHOIS)."

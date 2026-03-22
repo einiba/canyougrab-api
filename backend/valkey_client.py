@@ -1,6 +1,7 @@
 """
 Valkey (Redis-compatible) client for async job queue.
 Each job is a single unit of up to 100 domains — no chunking.
+Uses RQ (Redis Queue) for reliable dispatch, retries, and worker lifecycle.
 """
 
 import os
@@ -9,34 +10,58 @@ import logging
 from datetime import datetime, timezone
 
 import redis
+from rq import Queue, Retry
 
 logger = logging.getLogger(__name__)
 
 JOB_TTL = 3600  # 1 hour
-QUEUE_NAME = os.environ.get('VALKEY_QUEUE_NAME', 'queue:jobs')
+QUEUE_NAME = os.environ.get('VALKEY_QUEUE_NAME', 'canyougrab-jobs')
 
 _client = None
+_rq_client = None
+_rq_queue = None
+
+
+def _build_valkey_url() -> str:
+    host = os.environ.get('VALKEY_HOST', 'localhost')
+    port = os.environ.get('VALKEY_PORT', '25061')
+    user = os.environ.get('VALKEY_USERNAME', 'default')
+    pw = os.environ.get('VALKEY_PASSWORD', '')
+    return f'rediss://{user}:{pw}@{host}:{port}'
 
 
 def get_valkey() -> redis.Redis:
-    """Get a Valkey connection using a shared connection pool via URL."""
+    """Get a Valkey connection (decode_responses=True) for app-level hash operations."""
     global _client
     if _client is None:
-        host = os.environ.get('VALKEY_HOST', 'localhost')
-        port = os.environ.get('VALKEY_PORT', '25061')
-        user = os.environ.get('VALKEY_USERNAME', 'default')
-        pw = os.environ.get('VALKEY_PASSWORD', '')
-        url = f'rediss://{user}:{pw}@{host}:{port}'
-        _client = redis.from_url(url, decode_responses=True)
+        _client = redis.from_url(_build_valkey_url(), decode_responses=True)
     return _client
 
 
+def get_rq_connection() -> redis.Redis:
+    """Get a Valkey connection (decode_responses=False) for RQ internals.
+    RQ pickles job data and requires raw bytes."""
+    global _rq_client
+    if _rq_client is None:
+        _rq_client = redis.from_url(_build_valkey_url(), decode_responses=False)
+    return _rq_client
+
+
+def get_rq_queue() -> Queue:
+    """Get the shared RQ queue instance."""
+    global _rq_queue
+    if _rq_queue is None:
+        _rq_queue = Queue(QUEUE_NAME, connection=get_rq_connection())
+    return _rq_queue
+
+
 def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
-    """Create a job and enqueue it for worker processing."""
+    """Create a job hash and enqueue it via RQ for worker processing."""
     r = get_valkey()
     now = datetime.now(timezone.utc).isoformat()
     job_key = f'job:{job_id}'
 
+    # Store job metadata in our own hash (unchanged from pre-RQ)
     pipe = r.pipeline(transaction=True)
     pipe.hset(job_key, mapping={
         'status': 'pending',
@@ -46,8 +71,23 @@ def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
         'created_at': now,
     })
     pipe.expire(job_key, JOB_TTL)
-    pipe.lpush(QUEUE_NAME, job_key)
     pipe.execute()
+
+    # Enqueue via RQ for reliable dispatch with retries.
+    # If enqueue fails, clean up the hash so it doesn't sit in 'pending' forever.
+    try:
+        q = get_rq_queue()
+        q.enqueue(
+            'rq_tasks.process_domain_job',
+            job_key,
+            job_timeout=60,
+            result_ttl=0,
+            failure_ttl=JOB_TTL,
+            retry=Retry(max=2, interval=[5, 30]),
+        )
+    except Exception:
+        r.delete(job_key)
+        raise
 
     return {
         'job_id': job_id,

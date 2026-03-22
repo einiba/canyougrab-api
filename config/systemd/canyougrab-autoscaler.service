@@ -1,0 +1,14 @@
+[Unit]
+Description=CanYouGrab Worker Auto-Scaler
+After=network.target
+
+[Service]
+Type=simple
+User=canyougrab
+EnvironmentFile=/etc/canyougrab/env
+ExecStart=/opt/canyougrab/venv/bin/python /opt/canyougrab-repo/scripts/autoscaler.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
