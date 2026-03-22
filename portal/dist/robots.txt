@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /docs
+Allow: /pricing
+Disallow: /usage
+Disallow: /api-keys
+Disallow: /interactive
+Disallow: /card-setup
+
+Sitemap: https://portal.canyougrab.it/sitemap.xml
