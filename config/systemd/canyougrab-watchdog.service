@@ -1,0 +1,14 @@
+[Unit]
+Description=CanYouGrab Worker Watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/canyougrab/api
+EnvironmentFile=/opt/canyougrab/valkey.env
+Environment=WATCHDOG_WORKER_COUNT=3
+ExecStart=/opt/canyougrab/venv/bin/python3 /opt/canyougrab/scripts/worker_watchdog.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=canyougrab-watchdog

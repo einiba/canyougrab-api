@@ -1,0 +1,261 @@
+{
+  "dashboard": {
+    "uid": "canyougrab-system",
+    "title": "CanYouGrab — System Metrics",
+    "tags": ["canyougrab", "system", "node"],
+    "timezone": "browser",
+    "refresh": "15s",
+    "time": { "from": "now-1h", "to": "now" },
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+          "query": "label_values(node_cpu_seconds_total, instance)",
+          "includeAll": true,
+          "multi": true,
+          "current": { "selected": true, "text": "All", "value": "$__all" },
+          "refresh": 2
+        }
+      ]
+    },
+    "panels": [
+      {
+        "title": "CPU Usage %",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$instance\"}[1m])) * 100)",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Memory Usage %",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes{instance=~\"$instance\"} / node_memory_MemTotal_bytes{instance=~\"$instance\"})) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "CPU Usage (current)",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 60 },
+                { "color": "red", "value": 85 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$instance\"}[1m])) * 100)",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Memory Usage (current)",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes{instance=~\"$instance\"} / node_memory_MemTotal_bytes{instance=~\"$instance\"})) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Disk Usage (current)",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 8 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "(1 - (node_filesystem_avail_bytes{instance=~\"$instance\", mountpoint=\"/\", fstype!=\"tmpfs\"} / node_filesystem_size_bytes{instance=~\"$instance\", mountpoint=\"/\", fstype!=\"tmpfs\"})) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "Network Received",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps",
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(node_network_receive_bytes_total{instance=~\"$instance\", device!~\"lo|docker.*|br-.*\"}[1m])",
+            "legendFormat": "{{instance}} ({{device}})"
+          }
+        ]
+      },
+      {
+        "title": "Network Transmitted",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps",
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(node_network_transmit_bytes_total{instance=~\"$instance\", device!~\"lo|docker.*|br-.*\"}[1m])",
+            "legendFormat": "{{instance}} ({{device}})"
+          }
+        ]
+      },
+      {
+        "title": "Disk I/O Read",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps",
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(node_disk_read_bytes_total{instance=~\"$instance\", device!~\"loop.*\"}[1m])",
+            "legendFormat": "{{instance}} ({{device}})"
+          }
+        ]
+      },
+      {
+        "title": "Disk I/O Write",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "Bps",
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(node_disk_written_bytes_total{instance=~\"$instance\", device!~\"loop.*\"}[1m])",
+            "legendFormat": "{{instance}} ({{device}})"
+          }
+        ]
+      },
+      {
+        "title": "Open File Descriptors",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "fillOpacity": 15 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "node_filefd_allocated{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}}"
+          }
+        ]
+      },
+      {
+        "title": "System Load (1m / 5m / 15m)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+        "datasource": { "uid": "PBFA97CFB590B2093", "type": "prometheus" },
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "fillOpacity": 10 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "node_load1{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} load1"
+          },
+          {
+            "expr": "node_load5{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} load5"
+          },
+          {
+            "expr": "node_load15{instance=~\"$instance\"}",
+            "legendFormat": "{{instance}} load15"
+          }
+        ]
+      }
+    ],
+    "schemaVersion": 39
+  },
+  "folderUid": "ffgueii6ehypsf",
+  "overwrite": true
+}
