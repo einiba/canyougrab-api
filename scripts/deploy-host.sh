@@ -9,7 +9,7 @@ API_VENV_DIR="${API_VENV_DIR:-/opt/canyougrab/venv}"
 API_SERVICE="${API_SERVICE:-canyougrab-api}"
 WORKER_SERVICE="${WORKER_SERVICE:-canyougrab-worker}"
 MCP_SERVICE="${MCP_SERVICE:-canyougrab-mcp}"
-RQ_METRICS_SERVICE="${RQ_METRICS_SERVICE:-rq-metrics}"
+# RQ metrics exporter now runs on the admin droplet, not on app/worker hosts
 
 MCP_DIR="${MCP_DIR:-/opt/canyougrab-mcp}"
 MCP_VENV_DIR="${MCP_VENV_DIR:-/opt/canyougrab-mcp/.venv}"
@@ -42,10 +42,6 @@ rsync -a --delete "$REPO_DIR/portal/dist/" "$PORTAL_DIR/"
 services_to_restart=("$API_SERVICE" "$WORKER_SERVICE")
 services_to_status=("$API_SERVICE")
 
-# Restart RQ metrics exporter if installed (reads from same queue)
-if has_service "$RQ_METRICS_SERVICE"; then
-  services_to_restart+=("$RQ_METRICS_SERVICE")
-fi
 
 if has_service "$MCP_SERVICE"; then
   require_path "$REPO_DIR/mcp-server" "MCP source directory"
