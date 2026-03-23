@@ -34,7 +34,11 @@ def get_valkey() -> redis.Redis:
     """Get a Valkey connection (decode_responses=True) for app-level hash operations."""
     global _client
     if _client is None:
-        _client = redis.from_url(_build_valkey_url(), decode_responses=True)
+        _client = redis.from_url(
+            _build_valkey_url(),
+            decode_responses=True,
+            max_connections=200,
+        )
     return _client
 
 
@@ -43,7 +47,11 @@ def get_rq_connection() -> redis.Redis:
     RQ pickles job data and requires raw bytes."""
     global _rq_client
     if _rq_client is None:
-        _rq_client = redis.from_url(_build_valkey_url(), decode_responses=False)
+        _rq_client = redis.from_url(
+            _build_valkey_url(),
+            decode_responses=False,
+            max_connections=200,
+        )
     return _rq_client
 
 
@@ -80,7 +88,7 @@ def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
         q.enqueue(
             'rq_tasks.process_domain_job',
             job_key,
-            job_timeout=60,
+            job_timeout=120,
             result_ttl=0,
             failure_ttl=JOB_TTL,
             retry=Retry(max=2, interval=[5, 30]),

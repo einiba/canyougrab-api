@@ -16,6 +16,7 @@ WHOIS_PORT = int(os.environ.get('WHOIS_PORT', '3000'))
 WHOIS_TIMEOUT = float(os.environ.get('WHOIS_TIMEOUT', '10.0'))
 
 _base_url: str | None = None
+_http_client: httpx.Client | None = None
 
 
 def _get_base_url() -> str:
@@ -26,6 +27,20 @@ def _get_base_url() -> str:
         logger.info('Resolved %s to %s', WHOIS_HOSTNAME, ip)
         _base_url = f'http://{ip}:{WHOIS_PORT}'
     return _base_url
+
+
+def _get_http_client() -> httpx.Client:
+    """Get a persistent HTTP client with connection pooling."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(
+            timeout=WHOIS_TIMEOUT,
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+            ),
+        )
+    return _http_client
 
 
 def check_domain_whois(domain: str) -> dict | None:
@@ -48,7 +63,7 @@ def check_domain_whois(domain: str) -> dict | None:
     """
     try:
         url = f'{_get_base_url()}/whois/{domain}'
-        resp = httpx.get(url, timeout=WHOIS_TIMEOUT)
+        resp = _get_http_client().get(url)
         resp.raise_for_status()
         data = resp.json()
     except httpx.TimeoutException:
