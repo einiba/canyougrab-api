@@ -10,6 +10,7 @@ Returns v7 response shape with confidence scoring.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import dns.resolver
@@ -17,8 +18,12 @@ import dns.resolver
 from domain_cache import get_cached_domain, cache_domain
 from dns_client import check_domain_dns
 from whois_client import check_domain_whois
+from rdap_stats import record_rdap_outcome
 
 logger = logging.getLogger(__name__)
+
+# Per-domain timing stats (populated during profiling)
+_profiling_enabled = True
 
 
 def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
@@ -38,15 +43,23 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         }
     """
     domain = domain.lower().strip().rstrip('.')
+    t_start = time.monotonic()
 
     # ── Step 1: Cache check ──────────────────────────────────────
+    t0 = time.monotonic()
     cached = get_cached_domain(domain)
+    t_cache = time.monotonic() - t0
     if cached is not None:
+        if _profiling_enabled:
+            logger.info('PROFILE %s cache_hit=1 cache_ms=%.1f total_ms=%.1f',
+                        domain, t_cache * 1000, t_cache * 1000)
         return cached
 
     # ── Step 2: DNS NS query ─────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
+    t0 = time.monotonic()
     dns_result = check_domain_dns(domain, resolver)
+    t_dns = time.monotonic() - t0
 
     available = dns_result.get('available')
     tld = dns_result.get('tld', '')
@@ -54,6 +67,11 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
 
     # DNS error (SERVFAIL / timeout) — return low confidence, don't cache
     if available is None:
+        if _profiling_enabled:
+            logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 total_ms=%.1f',
+                        domain, t_cache * 1000, t_dns * 1000,
+                        dns_result.get('dns_status', 'error'),
+                        (time.monotonic() - t_start) * 1000)
         return {
             'domain': domain,
             'available': None,
@@ -93,10 +111,45 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
             'registration': None,
         }
         cache_domain(domain, result)
+        if _profiling_enabled:
+            logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 total_ms=%.1f',
+                        domain, t_cache * 1000, t_dns * 1000,
+                        dns_result.get('dns_status', 'registered'),
+                        (time.monotonic() - t_start) * 1000)
         return result
 
     # ── Step 3: WHOIS verification (DNS said NXDOMAIN) ───────────
+    t0 = time.monotonic()
     whois_data = check_domain_whois(domain)
+    t_whois = time.monotonic() - t0
+
+    lookup_source = whois_data.get('lookup_source') if whois_data else None
+
+    _profile_whois = lambda outcome: (
+        logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=%.1f whois_outcome=%s total_ms=%.1f',
+                    domain, t_cache * 1000, t_dns * 1000,
+                    dns_result.get('dns_status', 'nxdomain'),
+                    t_whois * 1000, outcome,
+                    (time.monotonic() - t_start) * 1000)
+        if _profiling_enabled else None
+    )
+
+    # RDAP definitively says domain not found — trust it, high confidence
+    if lookup_source == 'rdap_domain_not_found':
+        result = {
+            'domain': domain,
+            'available': True,
+            'confidence': 'high',
+            'tld': tld,
+            'source': 'rdap',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+        }
+        cache_domain(domain, result)
+        _profile_whois('rdap_domain_not_found')
+        record_rdap_outcome(tld, 'rdap_domain_not_found')
+        return result
 
     if whois_data is not None and whois_data.get('expiration_date'):
         # WHOIS found a registration — DNS was stale/wrong
@@ -116,6 +169,8 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
             },
         }
         cache_domain(domain, result)
+        _profile_whois('registered')
+        record_rdap_outcome(tld, 'rdap_success' if lookup_source == 'rdap' else 'whois_fallback')
         return result
 
     # WHOIS confirms available (no record found)
@@ -131,6 +186,8 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
             'registration': None,
         }
         cache_domain(domain, result)
+        _profile_whois('available')
+        record_rdap_outcome(tld, 'rdap_success' if lookup_source == 'rdap' else 'whois_fallback')
         return result
 
     # WHOIS failed/timed out — DNS NXDOMAIN is our only signal
@@ -145,4 +202,6 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         'registration': None,
     }
     cache_domain(domain, result)
+    _profile_whois('failed')
+    record_rdap_outcome(tld, 'rdap_error')
     return result

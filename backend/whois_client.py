@@ -64,6 +64,21 @@ def check_domain_whois(domain: str) -> dict | None:
     try:
         url = f'{_get_base_url()}/whois/{domain}'
         resp = _get_http_client().get(url)
+
+        # 404 means RDAP definitively responded "domain not found" — valid answer
+        if resp.status_code == 404:
+            return {
+                'registrar': None,
+                'creation_date': None,
+                'expiration_date': None,
+                'updated_date': None,
+                'name_servers': None,
+                'status': None,
+                'whois_server': None,
+                'query_time_ms': None,
+                'lookup_source': 'rdap_domain_not_found',
+            }
+
         resp.raise_for_status()
         data = resp.json()
     except httpx.TimeoutException:
@@ -87,4 +102,5 @@ def check_domain_whois(domain: str) -> dict | None:
         'status': parsed.get('status'),
         'whois_server': data.get('whois_server'),
         'query_time_ms': data.get('query_time_ms'),
+        'lookup_source': data.get('lookup_source'),
     }
