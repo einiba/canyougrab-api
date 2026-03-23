@@ -138,40 +138,6 @@ def _check_rate_limit(consumer_id: str, plan: str):
         )
 
 
-# ── IP-based rate limiting ────────────────────────────────────────
-
-IP_MINUTE_LIMIT = 20    # max lookups per IP per minute (across all accounts)
-IP_DAILY_LIMIT = 1_000  # max lookups per IP per day
-
-def _check_ip_rate_limit(ip: str):
-    """Check IP-level rate limits to prevent multi-account abuse."""
-    r = get_valkey()
-    minute_key = datetime.now(timezone.utc).strftime('%Y%m%d%H%M')
-    day_key = datetime.now(timezone.utc).strftime('%Y%m%d')
-
-    # Per-minute IP limit
-    ip_minute_key = f'iplimit:m:{ip}:{minute_key}'
-    count_m = r.incr(ip_minute_key)
-    if count_m == 1:
-        r.expire(ip_minute_key, 60)
-    if count_m > IP_MINUTE_LIMIT:
-        raise HTTPException(status_code=429, detail={
-            'error': 'IP per-minute rate limit exceeded',
-            'message': 'Too many requests from this IP address. Please try again later.',
-        })
-
-    # Daily IP limit
-    ip_day_key = f'iplimit:d:{ip}:{day_key}'
-    count_d = r.incr(ip_day_key)
-    if count_d == 1:
-        r.expire(ip_day_key, 86400)
-    if count_d > IP_DAILY_LIMIT:
-        raise HTTPException(status_code=429, detail={
-            'error': 'IP daily rate limit exceeded',
-            'message': 'Too many requests from this IP address today. Please try again tomorrow.',
-        })
-
-
 # ── Bulk domain check (long-poll) ─────────────────────────────────
 
 POLL_INTERVAL = 0.3   # seconds between Valkey polls
@@ -182,7 +148,6 @@ async def do_bulk_check(
     consumer: str,
     plan: str,
     domains: list[str],
-    client_ip: str,
     verbose: bool = False,
 ):
     """Shared bulk-check logic: rate limit, quota, enqueue job, long-poll for results.
@@ -201,10 +166,6 @@ async def do_bulk_check(
         }, status_code=400)
 
     _check_rate_limit(consumer, plan)
-
-    # IP-based rate limiting (anti-abuse)
-    if client_ip:
-        _check_ip_rate_limit(client_ip)
 
     # Monthly quota check
     monthly_limit = plan_info['monthly_limit']
@@ -280,8 +241,7 @@ async def api_check_bulk(
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'error': 'Provide a domains array'}, status_code=400)
 
-    client_ip = request.headers.get('x-forwarded-for', request.client.host if request.client else '').split(',')[0].strip()
-    return await do_bulk_check(user.consumer_id, user.plan, domains, client_ip, verbose)
+    return await do_bulk_check(user.consumer_id, user.plan, domains, verbose)
 
 
 # ── Other API routes ──────────────────────────────────────────────

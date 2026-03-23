@@ -57,11 +57,6 @@ async def portal_check_bulk(
 
     consumer_id, plan = _get_user_consumer(user.sub)
 
-    client_ip = request.headers.get(
-        'x-forwarded-for',
-        request.client.host if request.client else '',
-    ).split(',')[0].strip()
-
     # Import here to avoid circular import (app imports portal)
     from app import do_bulk_check
-    return await do_bulk_check(consumer_id, plan, domains, client_ip)
+    return await do_bulk_check(consumer_id, plan, domains)
