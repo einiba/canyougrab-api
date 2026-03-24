@@ -68,7 +68,7 @@ systemctl restart canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3
 systemctl restart canyougrab-watchdog.timer
 
 # --- Verify ---
-sleep 2
+sleep 5
 if curl -sf http://127.0.0.1:8000/health > /dev/null; then
     echo "==> Health check passed"
 else

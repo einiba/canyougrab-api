@@ -69,6 +69,18 @@ if [ -n "$SSH_KEY_IDS" ]; then
     CREATE_BODY="$CREATE_BODY, \"ssh_keys\": [$SSH_KEYS_JSON]"
 fi
 
+# Cloud-init user_data: harden SSH before first boot to prevent lockouts
+USER_DATA=$(cat <<'CLOUD_INIT'
+#!/bin/bash
+# Harden SSH to prevent lockouts from rapid connections
+sed -i 's/^#\?MaxStartups.*/MaxStartups 30:50:80/' /etc/ssh/sshd_config
+grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 30:50:80' >> /etc/ssh/sshd_config
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+CLOUD_INIT
+)
+USER_DATA_B64=$(echo "$USER_DATA" | base64 | tr -d '\n')
+CREATE_BODY="$CREATE_BODY, \"user_data\": \"$USER_DATA\""
+
 CREATE_BODY="$CREATE_BODY }"
 
 RESPONSE=$(do_api POST "droplets" -d "$CREATE_BODY")
@@ -159,11 +171,6 @@ REPO_URL="$2"
 echo "[bootstrap] Waiting for cloud-init..."
 cloud-init status --wait 2>/dev/null || true
 echo "[bootstrap] Cloud-init done"
-
-echo "[bootstrap] Hardening SSH (MaxStartups 30:50:80)"
-sed -i 's/^#\?MaxStartups.*/MaxStartups 30:50:80/' /etc/ssh/sshd_config
-grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 30:50:80' >> /etc/ssh/sshd_config
-systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
 
 echo "[bootstrap] Installing system packages"
 apt-get update -qq
