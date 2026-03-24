@@ -21,14 +21,36 @@ git checkout "$REF"
 git pull origin "$REF" 2>/dev/null || true
 echo "==> Code: $(git log --oneline -1)"
 
+# --- Detect environment (dev or prod) ---
+# Set via CANYOUGRAB_ENV env var, or auto-detect from hostname/ref
+CANYOUGRAB_ENV="${CANYOUGRAB_ENV:-}"
+if [ -z "$CANYOUGRAB_ENV" ]; then
+    HOSTNAME_STR=$(hostname)
+    if echo "$HOSTNAME_STR" | grep -qi 'dev'; then
+        CANYOUGRAB_ENV="dev"
+    elif echo "$REF" | grep -qi 'dev'; then
+        CANYOUGRAB_ENV="dev"
+    else
+        CANYOUGRAB_ENV="prod"
+    fi
+fi
+echo "==> Environment: $CANYOUGRAB_ENV"
+
 # --- Sync env files (split combined env into separate files for systemd) ---
-ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
+if [ ! -f "$ENV_SRC" ]; then
+    echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
+    ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+fi
 if [ -f "$ENV_SRC" ]; then
     grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
     grep -E '^(VALKEY_|WHOIS_)' "$ENV_SRC" > /opt/canyougrab/valkey.env
-    grep -E '^(STRIPE_|AUTH0_|PORTAL_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
-    echo "==> Env files synced"
+    grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
+    echo "==> Env files synced from $ENV_SRC"
 fi
+
+# --- Install only the right nginx config for this environment ---
+rm -f /etc/nginx/sites-enabled/dev-api.conf /etc/nginx/sites-enabled/prod-api.conf 2>/dev/null || true
 
 # --- Rsync application code ---
 rsync -a --delete --exclude="__pycache__" "$REPO_DIR/backend/" "$API_DIR/"
@@ -55,11 +77,20 @@ if [ -f "$REPO_DIR/config/env/cloudflare-origin-cert.pem" ]; then
     echo "==> SSL certs synced"
 fi
 
-# --- Sync nginx config ---
+# --- Sync nginx config (env-specific) ---
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-cp "$REPO_DIR/config/nginx/"*.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
+# Only install configs matching this environment
+for f in "$REPO_DIR/config/nginx/${CANYOUGRAB_ENV}-"*.conf; do
+    [ -f "$f" ] && cp "$f" /etc/nginx/sites-enabled/
+done
+# Also install shared configs (no env prefix)
+for f in "$REPO_DIR/config/nginx/"*.conf; do
+    basename="$(basename "$f")"
+    case "$basename" in dev-*|prod-*) continue;; esac
+    cp "$f" /etc/nginx/sites-enabled/
+done
 nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
-echo "==> Nginx synced"
+echo "==> Nginx synced ($CANYOUGRAB_ENV)"
 
 # --- Enable and restart services ---
 systemctl enable canyougrab-api canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3 canyougrab-watchdog.timer 2>/dev/null || true

@@ -37,6 +37,8 @@ TAG="${DO_TAG:-canyougrab-api-dev}"
 REPO_URL="git@github.com:ericismaking/canyougrab-api.git"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
+CANYOUGRAB_ENV="dev"
+
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -44,6 +46,7 @@ while [[ $# -gt 0 ]]; do
         --size) SIZE="$2"; shift 2;;
         --ref) REF="$2"; shift 2;;
         --region) REGION="$2"; shift 2;;
+        --env) CANYOUGRAB_ENV="$2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -140,7 +143,7 @@ python3 -m venv /opt/canyougrab/venv
 mkdir -p /opt/canyougrab/{api,portal,scripts}
 
 # --- Run deploy-app.sh ---
-bash config/deploy/deploy-app.sh $REF
+CANYOUGRAB_ENV=$CANYOUGRAB_ENV bash config/deploy/deploy-app.sh $REF
 
 echo "=== canyougrab provision completed at \$(date -u) ==="
 
