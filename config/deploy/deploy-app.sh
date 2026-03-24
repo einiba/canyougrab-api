@@ -47,7 +47,16 @@ cp "$REPO_DIR/config/systemd/"*.timer /etc/systemd/system/ 2>/dev/null || true
 systemctl daemon-reload
 echo "==> Systemd units synced"
 
+# --- Sync SSL certs ---
+if [ -f "$REPO_DIR/config/env/cloudflare-origin-cert.pem" ]; then
+    cp "$REPO_DIR/config/env/cloudflare-origin-cert.pem" /etc/ssl/cloudflare-origin-cert.pem
+    cp "$REPO_DIR/config/env/cloudflare-origin-key.pem" /etc/ssl/cloudflare-origin-key.pem
+    chmod 600 /etc/ssl/cloudflare-origin-key.pem
+    echo "==> SSL certs synced"
+fi
+
 # --- Sync nginx config ---
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 cp "$REPO_DIR/config/nginx/"*.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
 echo "==> Nginx synced"
