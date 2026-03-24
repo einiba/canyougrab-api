@@ -9,13 +9,13 @@
     "list": [
       {
         "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(canyougrab_workers_active, environment)",
+        "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+        "definition": "label_values(canyougrab_workers_active{job=\"rq_metrics\"}, environment)",
         "includeAll": true,
         "multi": true,
         "name": "environment",
         "label": "Environment",
-        "query": { "query": "label_values(canyougrab_workers_active, environment)", "refId": "env" },
+        "query": { "query": "label_values(canyougrab_workers_active{job=\"rq_metrics\"}, environment)", "refId": "env" },
         "refresh": 2,
         "sort": 1,
         "type": "query"
@@ -29,7 +29,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "canyougrab_queue_depth{environment=~\"$environment\"}",
+          "expr": "canyougrab_queue_depth{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}}",
           "refId": "A"
         }
@@ -60,12 +60,12 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "canyougrab_workers_active{environment=\"dev\"}",
+          "expr": "canyougrab_workers_active{job=\"rq_metrics\",environment=\"dev\"}",
           "legendFormat": "Active",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_workers_busy{environment=\"dev\"}",
+          "expr": "canyougrab_workers_busy{job=\"rq_metrics\",environment=\"dev\"}",
           "legendFormat": "Busy",
           "refId": "B"
         }
@@ -88,12 +88,12 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "targets": [
         {
-          "expr": "canyougrab_workers_active{environment=\"prod\"}",
+          "expr": "canyougrab_workers_active{job=\"rq_metrics\",environment=\"prod\"}",
           "legendFormat": "Active",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_workers_busy{environment=\"prod\"}",
+          "expr": "canyougrab_workers_busy{job=\"rq_metrics\",environment=\"prod\"}",
           "legendFormat": "Busy",
           "refId": "B"
         }
@@ -116,7 +116,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
       "targets": [
         {
-          "expr": "canyougrab_failed_jobs_total{environment=~\"$environment\"}",
+          "expr": "canyougrab_failed_jobs_total{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}}",
           "refId": "A"
         }
@@ -140,7 +140,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "sum(canyougrab_queue_depth{environment=~\"$environment\"})",
+          "expr": "sum(canyougrab_queue_depth{job=\"rq_metrics\",environment=~\"$environment\"})",
           "legendFormat": "Total",
           "refId": "A"
         }
@@ -166,12 +166,12 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
       "targets": [
         {
-          "expr": "canyougrab_started_jobs{environment=~\"$environment\"}",
+          "expr": "canyougrab_started_jobs{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} In Progress",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_scheduled_jobs{environment=~\"$environment\"}",
+          "expr": "canyougrab_scheduled_jobs{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Scheduled",
           "refId": "B"
         }
@@ -183,17 +183,17 @@
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
       "targets": [
         {
-          "expr": "canyougrab_queue_depth{environment=~\"$environment\"}",
+          "expr": "canyougrab_queue_depth{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Queue Depth",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_workers_active{environment=~\"$environment\"}",
+          "expr": "canyougrab_workers_active{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Workers Active",
           "refId": "B"
         },
         {
-          "expr": "canyougrab_workers_busy{environment=~\"$environment\"}",
+          "expr": "canyougrab_workers_busy{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Workers Busy",
           "refId": "C"
         }
@@ -210,12 +210,12 @@
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
       "targets": [
         {
-          "expr": "canyougrab_failed_jobs_total{environment=~\"$environment\"}",
+          "expr": "canyougrab_failed_jobs_total{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Failed",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_scheduled_jobs{environment=~\"$environment\"}",
+          "expr": "canyougrab_scheduled_jobs{job=\"rq_metrics\",environment=~\"$environment\"}",
           "legendFormat": "{{environment}} Scheduled (retry)",
           "refId": "B"
         }
@@ -236,22 +236,22 @@
       "maxDataPoints": 2160,
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "expr": "histogram_quantile(0.5, rate(canyougrab_processing_time_ms_bucket{job=\"rq_metrics\",environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{environment}} P50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.9, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "expr": "histogram_quantile(0.9, rate(canyougrab_processing_time_ms_bucket{job=\"rq_metrics\",environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{environment}} P90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "expr": "histogram_quantile(0.99, rate(canyougrab_processing_time_ms_bucket{job=\"rq_metrics\",environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{environment}} P99",
           "refId": "C"
         },
         {
-          "expr": "rate(canyougrab_processing_time_ms_sum{environment=~\"$environment\"}[5m]) / rate(canyougrab_processing_time_ms_count{environment=~\"$environment\"}[5m])",
+          "expr": "rate(canyougrab_processing_time_ms_sum{job=\"rq_metrics\",environment=~\"$environment\"}[5m]) / rate(canyougrab_processing_time_ms_count{job=\"rq_metrics\",environment=~\"$environment\"}[5m])",
           "legendFormat": "{{environment}} Average",
           "refId": "D"
         }
