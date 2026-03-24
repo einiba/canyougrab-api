@@ -5,6 +5,23 @@
   "graphTooltip": 1,
   "id": null,
   "links": [],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(canyougrab_workers_active, environment)",
+        "includeAll": true,
+        "multi": true,
+        "name": "environment",
+        "label": "Environment",
+        "query": { "query": "label_values(canyougrab_workers_active, environment)", "refId": "env" },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
   "panels": [
     {
       "title": "Queue Depth",
@@ -12,8 +29,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "canyougrab_queue_depth",
-          "legendFormat": "Pending Jobs",
+          "expr": "canyougrab_queue_depth{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}}",
           "refId": "A"
         }
       ],
@@ -38,17 +55,45 @@
       }
     },
     {
-      "title": "Workers",
+      "title": "Workers — Dev",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "canyougrab_workers_active",
+          "expr": "canyougrab_workers_active{environment=\"dev\"}",
           "legendFormat": "Active",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_workers_busy",
+          "expr": "canyougrab_workers_busy{environment=\"dev\"}",
+          "legendFormat": "Busy",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Workers — Prod",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "canyougrab_workers_active{environment=\"prod\"}",
+          "legendFormat": "Active",
+          "refId": "A"
+        },
+        {
+          "expr": "canyougrab_workers_busy{environment=\"prod\"}",
           "legendFormat": "Busy",
           "refId": "B"
         }
@@ -68,11 +113,11 @@
     {
       "title": "Failed Jobs",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
       "targets": [
         {
-          "expr": "canyougrab_failed_jobs_total",
-          "legendFormat": "Failed",
+          "expr": "canyougrab_failed_jobs_total{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}}",
           "refId": "A"
         }
       ],
@@ -92,10 +137,11 @@
     {
       "title": "Queue Depth (Current)",
       "type": "gauge",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "canyougrab_queue_depth",
+          "expr": "sum(canyougrab_queue_depth{environment=~\"$environment\"})",
+          "legendFormat": "Total",
           "refId": "A"
         }
       ],
@@ -120,13 +166,13 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
       "targets": [
         {
-          "expr": "canyougrab_started_jobs",
-          "legendFormat": "In Progress",
+          "expr": "canyougrab_started_jobs{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} In Progress",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_scheduled_jobs",
-          "legendFormat": "Scheduled (retry)",
+          "expr": "canyougrab_scheduled_jobs{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Scheduled",
           "refId": "B"
         }
       ]
@@ -134,21 +180,21 @@
     {
       "title": "Queue Depth + Workers Over Time",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
       "targets": [
         {
-          "expr": "canyougrab_queue_depth",
-          "legendFormat": "Queue Depth",
+          "expr": "canyougrab_queue_depth{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Queue Depth",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_workers_active",
-          "legendFormat": "Workers Active",
+          "expr": "canyougrab_workers_active{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Workers Active",
           "refId": "B"
         },
         {
-          "expr": "canyougrab_workers_busy",
-          "legendFormat": "Workers Busy",
+          "expr": "canyougrab_workers_busy{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Workers Busy",
           "refId": "C"
         }
       ],
@@ -161,16 +207,16 @@
     {
       "title": "Failed Jobs Over Time",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
       "targets": [
         {
-          "expr": "canyougrab_failed_jobs_total",
-          "legendFormat": "Total Failed",
+          "expr": "canyougrab_failed_jobs_total{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Failed",
           "refId": "A"
         },
         {
-          "expr": "canyougrab_scheduled_jobs",
-          "legendFormat": "Scheduled (pending retry)",
+          "expr": "canyougrab_scheduled_jobs{environment=~\"$environment\"}",
+          "legendFormat": "{{environment}} Scheduled (retry)",
           "refId": "B"
         }
       ],
@@ -183,30 +229,30 @@
     },
     {
       "title": "Processing Time (ms)",
-      "description": "Job processing time: completed_at - queued_at. Shows P50, P90, P99, and average.",
+      "description": "Job processing time per environment. Shows P50, P90, P99, and average.",
       "type": "timeseries",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
       "interval": "10s",
       "maxDataPoints": 2160,
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, rate(canyougrab_processing_time_ms_bucket[5m]))",
-          "legendFormat": "P50",
+          "expr": "histogram_quantile(0.5, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "legendFormat": "{{environment}} P50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.9, rate(canyougrab_processing_time_ms_bucket[5m]))",
-          "legendFormat": "P90",
+          "expr": "histogram_quantile(0.9, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "legendFormat": "{{environment}} P90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(canyougrab_processing_time_ms_bucket[5m]))",
-          "legendFormat": "P99",
+          "expr": "histogram_quantile(0.99, rate(canyougrab_processing_time_ms_bucket{environment=~\"$environment\"}[5m]))",
+          "legendFormat": "{{environment}} P99",
           "refId": "C"
         },
         {
-          "expr": "rate(canyougrab_processing_time_ms_sum[5m]) / rate(canyougrab_processing_time_ms_count[5m])",
-          "legendFormat": "Average",
+          "expr": "rate(canyougrab_processing_time_ms_sum{environment=~\"$environment\"}[5m]) / rate(canyougrab_processing_time_ms_count{environment=~\"$environment\"}[5m])",
+          "legendFormat": "{{environment}} Average",
           "refId": "D"
         }
       ],
@@ -239,7 +285,6 @@
   ],
   "schemaVersion": 39,
   "tags": ["canyougrab", "queue", "rq"],
-  "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {
     "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
@@ -248,5 +293,6 @@
   "timezone": "browser",
   "title": "CanYouGrab — Queue & Workers",
   "uid": "canyougrab-queue",
-  "version": 1
+  "version": 2,
+  "refresh": "15s"
 }
