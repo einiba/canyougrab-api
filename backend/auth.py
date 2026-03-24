@@ -23,7 +23,7 @@ from valkey_client import get_valkey
 
 logger = logging.getLogger(__name__)
 
-AUTH0_DOMAIN = 'auth.canyougrab.it'
+AUTH0_DOMAIN = os.environ.get('AUTH0_DOMAIN', 'auth.canyougrab.it')
 AUTH0_AUDIENCE = 'https://api.canyougrab.it'
 AUTH0_ISSUER = f'https://{AUTH0_DOMAIN}/'
 JWKS_URL = f'https://{AUTH0_DOMAIN}/.well-known/jwks.json'
