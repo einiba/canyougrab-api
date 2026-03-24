@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, dict] | None = None
 _cache_lock = threading.Lock()
 _cache_loaded_at: float = 0
-_CACHE_TTL = 300  # 5 minutes
+_CACHE_TTL = 180  # 3 minutes — fast reaction to DB changes
 
 
 def _load_registry() -> dict[str, dict]:
@@ -26,7 +26,7 @@ def _load_registry() -> dict[str, dict]:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT tld, rdap_server, whois_disabled_at, whois_disabled_reason
+                    SELECT tld, rdap_server, whois_disabled_at, whois_disabled_reason, origin
                     FROM tld_registry
                 """)
                 for row in cur.fetchall():
@@ -34,6 +34,7 @@ def _load_registry() -> dict[str, dict]:
                         'rdap_server': row[1],
                         'whois_disabled': row[2] is not None,
                         'whois_disabled_reason': row[3],
+                        'origin': row[4],
                     }
         finally:
             conn.close()
@@ -67,3 +68,12 @@ def is_whois_disabled(tld: str) -> bool:
     if entry is None:
         return False  # Unknown TLD — allow WHOIS
     return entry['whois_disabled']
+
+
+def get_rdap_server(tld: str) -> str | None:
+    """Get the RDAP server URL for a TLD, or None if unknown."""
+    registry = _get_registry()
+    entry = registry.get(tld.lower())
+    if entry is None:
+        return None
+    return entry['rdap_server']
