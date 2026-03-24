@@ -15,7 +15,7 @@ IMAGE="ubuntu-24-04-x64"
 VPC_UUID=""  # set via DO_VPC_UUID env var
 SSH_KEY_IDS="" # comma-separated, set via DO_SSH_KEY_IDS env var
 TAG="canyougrab-api-dev"
-REPO_URL="https://github.com/ericismaking/canyougrab-api.git"
+REPO_URL="git@github.com:ericismaking/canyougrab-api.git"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
 # --- Parse args ---
@@ -114,23 +114,62 @@ echo "==> Public IP: $PUBLIC_IP, Private IP: $PRIVATE_IP"
 
 # --- Wait for SSH ---
 echo -n "==> Waiting for SSH"
-for i in $(seq 1 30); do
-    sleep 5
-    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "$SSH_KEY" root@"$PUBLIC_IP" "echo ok" 2>/dev/null; then
+SSH_READY=false
+for i in $(seq 1 60); do
+    sleep 10
+    if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i "$SSH_KEY" root@"$PUBLIC_IP" "echo ok" 2>/dev/null; then
         echo " connected!"
+        SSH_READY=true
         break
     fi
     echo -n "."
 done
+if [ "$SSH_READY" = false ]; then
+    echo " TIMEOUT — could not connect to $PUBLIC_IP via SSH"
+    echo "  Droplet ID: $DROPLET_ID (not destroyed, fix manually)"
+    exit 1
+fi
 
-SSH_CMD="ssh -o StrictHostKeyChecking=no -i $SSH_KEY root@$PUBLIC_IP"
+SSH_CMD="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -i $SSH_KEY root@$PUBLIC_IP"
 
-# --- Bootstrap ---
-echo "==> Installing system packages"
-$SSH_CMD "apt-get update -qq && apt-get install -y -qq python3 python3-venv python3-pip nginx git curl" 2>&1 | tail -3
+# --- Copy GitHub deploy key (needed to clone private repo) ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY_KEY="$SCRIPT_DIR/../env/github-deploy-key"
+if [ ! -f "$DEPLOY_KEY" ]; then
+    echo "ERROR: GitHub deploy key not found at $DEPLOY_KEY"
+    exit 1
+fi
+scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i "$SSH_KEY" \
+    "$DEPLOY_KEY" root@"$PUBLIC_IP":/root/.ssh/canyougrab-deploy
+$SSH_CMD "chmod 600 /root/.ssh/canyougrab-deploy && cat > /root/.ssh/config <<'GHCONF'
+Host github.com
+    IdentityFile /root/.ssh/canyougrab-deploy
+    StrictHostKeyChecking no
+GHCONF"
+echo "==> GitHub deploy key installed"
 
-echo "==> Installing node_exporter"
-$SSH_CMD bash <<'NODEEXP'
+# --- Single SSH session: cloud-init wait + SSH hardening + full bootstrap ---
+# Using one long-lived connection avoids SSH rate limiting / lockouts.
+echo "==> Bootstrapping droplet in a single SSH session..."
+$SSH_CMD bash -s "$REF" "$REPO_URL" <<'REMOTE_BOOTSTRAP'
+set -e
+REF="$1"
+REPO_URL="$2"
+
+echo "[bootstrap] Waiting for cloud-init..."
+cloud-init status --wait 2>/dev/null || true
+echo "[bootstrap] Cloud-init done"
+
+echo "[bootstrap] Hardening SSH (MaxStartups 30:50:80)"
+sed -i 's/^#\?MaxStartups.*/MaxStartups 30:50:80/' /etc/ssh/sshd_config
+grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 30:50:80' >> /etc/ssh/sshd_config
+systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+
+echo "[bootstrap] Installing system packages"
+apt-get update -qq
+apt-get install -y -qq python3 python3-venv python3-pip nginx git curl 2>&1 | tail -3
+
+echo "[bootstrap] Installing node_exporter"
 cd /tmp
 curl -sLO https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz
 tar xf node_exporter-1.8.2.linux-amd64.tar.gz
@@ -148,22 +187,28 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now node_exporter
-NODEEXP
 
-echo "==> Cloning repo"
-$SSH_CMD "git clone $REPO_URL /opt/canyougrab-repo && cd /opt/canyougrab-repo && git checkout $REF"
+echo "[bootstrap] Cloning repo"
+git clone "$REPO_URL" /opt/canyougrab-repo
+cd /opt/canyougrab-repo
+git checkout "$REF"
+echo "[bootstrap] Repo at: $(git log --oneline -1)"
 
-echo "==> Creating virtualenv"
-$SSH_CMD "python3 -m venv /opt/canyougrab/venv"
+echo "[bootstrap] Creating virtualenv and directories"
+python3 -m venv /opt/canyougrab/venv
+mkdir -p /opt/canyougrab/{api,portal,scripts}
 
-echo "==> Creating directories"
-$SSH_CMD "mkdir -p /opt/canyougrab/{api,portal,scripts}"
+echo "[bootstrap] Running deploy-app.sh"
+bash config/deploy/deploy-app.sh "$REF"
 
-echo "==> Running deploy-app.sh"
-$SSH_CMD "cd /opt/canyougrab-repo && bash config/deploy/deploy-app.sh $REF"
+echo "[bootstrap] SSL cert check"
+mkdir -p /etc/ssl
+if [ ! -f /etc/ssl/cloudflare-origin-cert.pem ]; then
+    echo "WARNING: No SSL cert at /etc/ssl/cloudflare-origin-cert.pem"
+fi
 
-echo "==> Setting up SSL (Cloudflare origin cert placeholder)"
-$SSH_CMD "mkdir -p /etc/ssl && test -f /etc/ssl/cloudflare-origin-cert.pem || (echo 'WARNING: No SSL cert found. Set up Cloudflare Origin cert at /etc/ssl/cloudflare-origin-cert.pem')"
+echo "[bootstrap] DONE"
+REMOTE_BOOTSTRAP
 
 echo ""
 echo "============================================"
