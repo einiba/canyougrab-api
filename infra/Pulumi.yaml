@@ -1,0 +1,11 @@
+name: canyougrab-infra
+description: CanYouGrab.it infrastructure
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: python

@@ -1,0 +1,17 @@
+config:
+  digitalocean:token:
+    secure: AAABAGueCViInQI6q8/pzxNOmFb6Gyw+SALcIDxlRBnbiO2xRuBcRoJXFR4gm5JTGYpM/oGI2HgAfIxiJO+Q11Fon3WSc7J8lahis9jZkkXOL77k7fNp63koPiEwNYWrCXfitzdxkw==
+  canyougrab-infra:ssh_key_fingerprint: "54934856"
+  canyougrab-infra:region: nyc3
+  canyougrab-infra:droplet_size: s-1vcpu-1gb
+  canyougrab-infra:git_ref: dev
+  canyougrab-infra:postgres_password:
+    secure: AAABAHvglMgkc2Yvj/MERpDifLbwbOgGEogIDTCmVB2qojnhG6g6GxPqaE4sZP+g+/EmH42x7Mw=
+  canyougrab-infra:valkey_password:
+    secure: AAABAFYcUmbeVIQlgTFI/4EkUAWvyhOl95a+qoR/7WwfMFyqaR9ZwnqQWCQJBECZb3w7ZBTQkv4=
+  canyougrab-infra:stripe_secret_key:
+    secure: AAABAK/C4bbRUd/mfxVMytG6KdgnXHgzk4PHg8GkBhtq4eyHvvTn6GwrhxrGVhob+Xh1Mlt1f9OYvNVMBnw3BH+n3Mebom1IvzAaaqfBdssyK4evQ0qjnrhnNk2gc0AY2aJu0Zo9rohHulScsM7rWWs62DhJkEfe/VMhTImjQwks/77OAGSmjmvPRw==
+  canyougrab-infra:stripe_webhook_secret:
+    secure: AAABAGSC5c4b8MeWlpClSMACYWwVj5pGjMdFqFWR0ujDl7hzdRo1rtjwKc6Qu4bd5qZvhWJFksMiXlyeUQ1jKLY4NSwLDQ==
+  cloudflare:apiToken:
+    secure: AAABAKk9IFM2+pAXBX88EJv6kqiBQXLqnIyZ89Rv1/OK8K8lXF4jqKKyt7HiebpEsBMPcJys8/kUdPxwuSQYUo/8inW/SMj3mn34vosSevcTULfZCA==
