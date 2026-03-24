@@ -22,11 +22,14 @@ logger = logging.getLogger(__name__)
 
 IANA_RDAP_URL = 'https://data.iana.org/rdap/dns.json'
 
-# Known-working RDAP servers for TLDs not in IANA bootstrap
+# Known-working RDAP servers for TLDs not in IANA bootstrap.
+# Verified working 2026-03-24. Keep in sync with build.rs get_supplemental_mappings().
 SUPPLEMENTAL_SERVERS = {
+    'co': 'https://rdap.centralnic.com/co/',
     'io': 'https://rdap.identitydigital.services/rdap/',
     'me': 'https://rdap.identitydigital.services/rdap/',
-    'co': 'https://rdap.centralnic.com/co/',
+    'de': 'https://rdap.denic.de/',
+    'ch': 'https://rdap.nic.ch/',
 }
 
 
