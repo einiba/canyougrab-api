@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from auth import AUTH0_DOMAIN, JWTUser, jwt_auth
 from plans import get_plan
 from queries import get_db_conn
-from users import upsert_user, get_user
+from users import upsert_user, get_user, merge_user_data
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,26 @@ async def create_session(request: Request, user: JWTUser = Depends(jwt_auth)):
         email_verified=email_verified,
         auth_provider=auth_provider,
     )
+
+    # Lazy migration: if this user has linked identities (from Auth0 account
+    # linking), reassign any orphaned api_keys from secondary subs.
+    try:
+        token = request.headers.get('Authorization', '')[7:]
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f'https://{AUTH0_DOMAIN}/userinfo',
+                headers={'Authorization': f'Bearer {token}'},
+            )
+        if resp.status_code == 200:
+            info = resp.json()
+            identities = info.get('identities', [])
+            if len(identities) > 1:
+                for identity in identities:
+                    secondary_sub = f"{identity['provider']}|{identity['user_id']}"
+                    if secondary_sub != user.sub:
+                        merge_user_data(user.sub, secondary_sub)
+    except Exception as e:
+        logger.debug('Linked identity check skipped: %s', e)
 
     plan = _get_user_plan(user.sub)
     plan_info = get_plan(plan)

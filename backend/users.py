@@ -120,3 +120,47 @@ def get_user_email(auth0_sub: str) -> str:
     """Quick lookup for just the email.  Returns '' if not found."""
     user = get_user(auth0_sub)
     return user['email'] if user else ''
+
+
+def merge_user_data(primary_sub: str, secondary_sub: str) -> bool:
+    """Reassign all data from secondary_sub to primary_sub after Auth0 account linking.
+
+    When Auth0 links two accounts, the secondary ceases to exist. This function
+    migrates orphaned api_keys and removes the secondary users row.
+    Returns True if any rows were affected.
+    """
+    if not primary_sub or not secondary_sub or primary_sub == secondary_sub:
+        return False
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # Reassign API keys from secondary to primary
+            cur.execute(
+                "UPDATE api_keys SET user_sub = %s WHERE user_sub = %s",
+                (primary_sub, secondary_sub),
+            )
+            keys_moved = cur.rowcount
+
+            # Delete the orphaned secondary user row
+            cur.execute(
+                "DELETE FROM users WHERE auth0_sub = %s",
+                (secondary_sub,),
+            )
+            user_deleted = cur.rowcount
+
+            conn.commit()
+
+        if keys_moved or user_deleted:
+            logger.info(
+                'Merged user data: %s → %s (keys=%d, user_deleted=%d)',
+                secondary_sub, primary_sub, keys_moved, user_deleted,
+            )
+            return True
+        return False
+    except Exception as e:
+        logger.error('Failed to merge user data %s → %s: %s', secondary_sub, primary_sub, e)
+        conn.rollback()
+        return False
+    finally:
+        conn.close()

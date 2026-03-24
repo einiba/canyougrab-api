@@ -281,6 +281,7 @@ def _create_remote_app():
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.middleware.cors import CORSMiddleware
     from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
     from starlette.routing import Mount
@@ -320,6 +321,12 @@ def _create_remote_app():
     return Starlette(
         routes=[Mount("/", app=mcp.streamable_http_app())],
         middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_methods=["*"],
+                allow_headers=["*"],
+            ),
             Middleware(TrustedHostMiddleware, allowed_hosts=["*"]),
             Middleware(AuthForwardMiddleware),
         ],
