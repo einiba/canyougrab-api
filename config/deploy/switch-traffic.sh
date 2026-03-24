@@ -5,11 +5,22 @@
 # Requires: DO_API_TOKEN env var
 set -euo pipefail
 
+# --- Auto-load config ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/deploy.env" ]; then
+    set -a; source "$SCRIPT_DIR/deploy.env"; set +a
+fi
+if [ -z "${DO_API_TOKEN:-}" ]; then
+    DOCTL_CONFIG="${HOME}/Library/Application Support/doctl/config.yaml"
+    [ ! -f "$DOCTL_CONFIG" ] && DOCTL_CONFIG="$HOME/.config/doctl/config.yaml"
+    [ -f "$DOCTL_CONFIG" ] && DO_API_TOKEN=$(grep 'access-token' "$DOCTL_CONFIG" | head -1 | awk '{print $2}')
+fi
+
 TARGET_IP="${1:?Usage: switch-traffic.sh <target-ip>}"
 DOMAIN="${2:-dev-api.canyougrab.it}"
 DO_DOMAIN="canyougrab.it"
 
-: "${DO_API_TOKEN:?Set DO_API_TOKEN env var}"
+: "${DO_API_TOKEN:?Set DO_API_TOKEN — or install doctl and authenticate}"
 
 do_api() {
     curl -sf -X "$1" "https://api.digitalocean.com/v2/$2" \

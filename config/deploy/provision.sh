@@ -7,13 +7,33 @@
 # Requires: DO_API_TOKEN, DO_VPC_UUID, DO_SSH_KEY_IDS env vars
 set -euo pipefail
 
-# --- Defaults ---
+# --- Auto-load config ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/deploy.env"
+if [ -f "$ENV_FILE" ]; then
+    echo "==> Loading config from $ENV_FILE"
+    set -a; source "$ENV_FILE"; set +a
+fi
+
+# Auto-detect DO API token from doctl if not set
+if [ -z "${DO_API_TOKEN:-}" ]; then
+    DOCTL_CONFIG="$HOME/Library/Application Support/doctl/config.yaml"
+    if [ ! -f "$DOCTL_CONFIG" ]; then
+        DOCTL_CONFIG="$HOME/.config/doctl/config.yaml"
+    fi
+    if [ -f "$DOCTL_CONFIG" ]; then
+        DO_API_TOKEN=$(grep 'access-token' "$DOCTL_CONFIG" | head -1 | awk '{print $2}')
+        echo "==> Using DO API token from doctl config"
+    fi
+fi
+
+# --- Defaults (deploy.env values take precedence) ---
 NAME=""
-SIZE="s-1vcpu-1gb"
+SIZE="${DO_SIZE:-s-1vcpu-1gb}"
 REF="dev"
-REGION="nyc3"
-IMAGE="ubuntu-24-04-x64"
-TAG="canyougrab-api-dev"
+REGION="${DO_REGION:-nyc3}"
+IMAGE="${DO_IMAGE:-ubuntu-24-04-x64}"
+TAG="${DO_TAG:-canyougrab-api-dev}"
 REPO_URL="git@github.com:ericismaking/canyougrab-api.git"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
@@ -33,11 +53,17 @@ if [ -z "$NAME" ]; then
     exit 1
 fi
 
-: "${DO_API_TOKEN:?Set DO_API_TOKEN env var}"
+: "${DO_API_TOKEN:?Set DO_API_TOKEN — or install doctl and authenticate}"
 VPC_UUID="${DO_VPC_UUID:-}"
 SSH_KEY_IDS="${DO_SSH_KEY_IDS:-}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Validate SSH key IDs are set
+if [ -z "$SSH_KEY_IDS" ]; then
+    echo "ERROR: DO_SSH_KEY_IDS is empty. Set it in deploy.env or as an env var."
+    echo "  List keys: doctl compute ssh-key list"
+    exit 1
+fi
+
 DEPLOY_KEY_FILE="$SCRIPT_DIR/../env/github-deploy-key"
 if [ ! -f "$DEPLOY_KEY_FILE" ]; then
     echo "ERROR: GitHub deploy key not found at $DEPLOY_KEY_FILE"
