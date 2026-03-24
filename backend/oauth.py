@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["OAuth"])
 
 # Auth0 configuration
-AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN", "auth.canyougrab.it")
-AUTH0_CLIENT_ID = os.environ.get("AUTH0_CLIENT_ID", "xeaTguUBeoeZg2PmetPVrnQmkud8Ikyq")
+AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN", "login.canyougrab.it")
+AUTH0_CLIENT_ID = os.environ.get("AUTH0_CLIENT_ID", "Xz0TZK9Z2E9wN55FJVQYsMHsLougZzRm")
 AUTH0_CLIENT_SECRET = os.environ.get("AUTH0_CLIENT_SECRET", "")
 AUTH0_AUDIENCE = "https://api.canyougrab.it"
 
