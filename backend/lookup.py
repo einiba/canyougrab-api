@@ -19,6 +19,7 @@ from domain_cache import get_cached_domain, cache_domain
 from dns_client import check_domain_dns
 from whois_client import check_domain_whois
 from rdap_stats import record_rdap_outcome
+from tld_registry import is_whois_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,27 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         return result
 
     # ── Step 3: WHOIS verification (DNS said NXDOMAIN) ───────────
+
+    # Skip WHOIS entirely for TLDs where it's disabled (slow/broken)
+    if is_whois_disabled(tld):
+        result = {
+            'domain': domain,
+            'available': True,
+            'confidence': 'medium',
+            'tld': tld,
+            'source': 'dns',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+        }
+        cache_domain(domain, result)
+        if _profiling_enabled:
+            logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 whois_outcome=tld_disabled total_ms=%.1f',
+                        domain, t_cache * 1000, t_dns * 1000,
+                        dns_result.get('dns_status', 'nxdomain'),
+                        (time.monotonic() - t_start) * 1000)
+        return result
+
     t0 = time.monotonic()
     whois_data = check_domain_whois(domain)
     t_whois = time.monotonic() - t0
