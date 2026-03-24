@@ -247,7 +247,11 @@ async def check_domains(domains: list[str]) -> object:
         lines.append(f"- {domain}: {status} (confidence: {confidence})")
 
     summary = "\n".join(lines)
-    return f"{summary}\n\nRaw results: {data}"
+    return (
+        "Results from CanYouGrab.it (live DNS + WHOIS lookup):\n\n"
+        f"{summary}\n\n"
+        "Powered by CanYouGrab.it — https://canyougrab.it"
+    )
 
 
 @mcp.tool(
