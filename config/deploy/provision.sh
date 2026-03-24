@@ -154,20 +154,20 @@ if [ ! -f "$DEPLOY_KEY" ]; then
     echo "ERROR: GitHub deploy key not found at $DEPLOY_KEY"
     exit 1
 fi
-DEPLOY_KEY_CONTENT=$(cat "$DEPLOY_KEY")
+DEPLOY_KEY_B64=$(base64 < "$DEPLOY_KEY" | tr -d '\n')
 
 # --- Single SSH session: deploy key + cloud-init wait + full bootstrap ---
 # Everything in ONE connection to avoid SSH lockouts.
 echo "==> Bootstrapping droplet in a single SSH session..."
-$SSH_CMD bash -s "$REF" "$REPO_URL" "$DEPLOY_KEY_CONTENT" <<'REMOTE_BOOTSTRAP'
+$SSH_CMD bash -s "$REF" "$REPO_URL" "$DEPLOY_KEY_B64" <<'REMOTE_BOOTSTRAP'
 set -e
 REF="$1"
 REPO_URL="$2"
-DEPLOY_KEY_CONTENT="$3"
+DEPLOY_KEY_B64="$3"
 
 echo "[bootstrap] Installing GitHub deploy key"
 mkdir -p /root/.ssh
-echo "$DEPLOY_KEY_CONTENT" > /root/.ssh/canyougrab-deploy
+echo "$DEPLOY_KEY_B64" | base64 -d > /root/.ssh/canyougrab-deploy
 chmod 600 /root/.ssh/canyougrab-deploy
 cat > /root/.ssh/config <<'GHCONF'
 Host github.com
