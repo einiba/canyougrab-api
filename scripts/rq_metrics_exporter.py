@@ -65,14 +65,20 @@ def parse_host_environments():
 
 
 def classify_worker(hostname: str, host_map: dict[str, str]) -> str:
-    """Return environment name for a worker based on its hostname."""
+    """Return environment name for a worker based on its hostname.
+
+    Matching priority:
+      1. Exact match in host_map
+      2. Substring match (longest wins) — supports blue-green hostnames
+         e.g., pattern "prod" matches "canyougrab-prod-green"
+    """
     if hostname in host_map:
         return host_map[hostname]
     best_match = ''
     best_env = 'unknown'
-    for prefix, env_name in host_map.items():
-        if hostname.startswith(prefix) and len(prefix) > len(best_match):
-            best_match = prefix
+    for pattern, env_name in host_map.items():
+        if pattern in hostname and len(pattern) > len(best_match):
+            best_match = pattern
             best_env = env_name
     return best_env
 
