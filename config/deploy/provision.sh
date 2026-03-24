@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Provision a new dev-api droplet from scratch using only the git repo.
-# Usage: bash provision.sh --name NAME [--size SIZE] [--ref REF]
+# The entire bootstrap runs via cloud-init user_data — no SSH needed until
+# the final health check. This avoids SSH lockout issues completely.
 #
-# Requires: DO_API_TOKEN env var, SSH key accessible
-# All secrets come from the git repo (config/env/dev-api.env).
+# Usage: bash provision.sh --name NAME [--size SIZE] [--ref REF]
+# Requires: DO_API_TOKEN, DO_VPC_UUID, DO_SSH_KEY_IDS env vars
 set -euo pipefail
 
 # --- Defaults ---
@@ -12,8 +13,6 @@ SIZE="s-1vcpu-1gb"
 REF="dev"
 REGION="nyc3"
 IMAGE="ubuntu-24-04-x64"
-VPC_UUID=""  # set via DO_VPC_UUID env var
-SSH_KEY_IDS="" # comma-separated, set via DO_SSH_KEY_IDS env var
 TAG="canyougrab-api-dev"
 REPO_URL="git@github.com:ericismaking/canyougrab-api.git"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
@@ -38,6 +37,14 @@ fi
 VPC_UUID="${DO_VPC_UUID:-}"
 SSH_KEY_IDS="${DO_SSH_KEY_IDS:-}"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEPLOY_KEY_FILE="$SCRIPT_DIR/../env/github-deploy-key"
+if [ ! -f "$DEPLOY_KEY_FILE" ]; then
+    echo "ERROR: GitHub deploy key not found at $DEPLOY_KEY_FILE"
+    exit 1
+fi
+DEPLOY_KEY_B64=$(base64 < "$DEPLOY_KEY_FILE" | tr -d '\n')
+
 do_api() {
     curl -sf -X "$1" "https://api.digitalocean.com/v2/$2" \
         -H "Authorization: Bearer $DO_API_TOKEN" \
@@ -45,49 +52,100 @@ do_api() {
         "${@:3}"
 }
 
-echo "==> Creating droplet: $NAME ($SIZE, $REGION, ref=$REF)"
-
-# --- Build create payload ---
-CREATE_BODY=$(cat <<EOF
-{
-    "name": "$NAME",
-    "region": "$REGION",
-    "size": "$SIZE",
-    "image": "$IMAGE",
-    "tags": ["$TAG"],
-    "monitoring": true
-EOF
-)
-
-if [ -n "$VPC_UUID" ]; then
-    CREATE_BODY="$CREATE_BODY, \"vpc_uuid\": \"$VPC_UUID\""
-fi
-
-if [ -n "$SSH_KEY_IDS" ]; then
-    # Convert comma-separated IDs to JSON array
-    SSH_KEYS_JSON=$(echo "$SSH_KEY_IDS" | tr ',' '\n' | sed 's/^/"/;s/$/"/' | paste -sd, -)
-    CREATE_BODY="$CREATE_BODY, \"ssh_keys\": [$SSH_KEYS_JSON]"
-fi
-
-# Cloud-init user_data: harden SSH and set up VPC hosts before first boot
-USER_DATA=$(cat <<'CLOUD_INIT'
+# --- Build cloud-init user_data ---
+# This script runs as root on first boot via cloud-init. It does EVERYTHING:
+# SSH hardening, VPC hosts, packages, deploy key, repo clone, virtualenv, deploy.
+# No SSH connection is needed until the health check at the very end.
+USER_DATA=$(cat <<CLOUD_INIT_EOF
 #!/bin/bash
-# Harden SSH to prevent lockouts from rapid connections
-sed -i 's/^#\?MaxStartups.*/MaxStartups 30:50:80/' /etc/ssh/sshd_config
-grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 30:50:80' >> /etc/ssh/sshd_config
+set -e
+exec > /var/log/canyougrab-provision.log 2>&1
+echo "=== canyougrab provision started at \$(date -u) ==="
+
+# --- SSH hardening (prevent lockouts) ---
+sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
+grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-# VPC internal hostnames
-grep -q 'unbound.canyougrab.internal' /etc/hosts || echo '10.108.0.5 unbound.canyougrab.internal' >> /etc/hosts
-grep -q 'rust-whois.canyougrab.internal' /etc/hosts || echo '10.108.0.8 rust-whois.canyougrab.internal' >> /etc/hosts
-CLOUD_INIT
+# --- VPC internal hostnames ---
+echo '10.108.0.5 unbound.canyougrab.internal' >> /etc/hosts
+echo '10.108.0.8 rust-whois.canyougrab.internal' >> /etc/hosts
+
+# --- System packages ---
+apt-get update -qq
+apt-get install -y -qq python3 python3-venv python3-pip nginx git curl
+
+# --- Node exporter ---
+cd /tmp
+curl -sLO https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz
+tar xf node_exporter-1.8.2.linux-amd64.tar.gz
+mv node_exporter-1.8.2.linux-amd64/node_exporter /usr/local/bin/
+useradd -rs /bin/false node_exporter 2>/dev/null || true
+cat > /etc/systemd/system/node_exporter.service <<'NODEEXP'
+[Unit]
+Description=Node Exporter
+After=network.target
+[Service]
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter
+[Install]
+WantedBy=multi-user.target
+NODEEXP
+systemctl daemon-reload
+systemctl enable --now node_exporter
+
+# --- GitHub deploy key ---
+mkdir -p /root/.ssh
+echo "$DEPLOY_KEY_B64" | base64 -d > /root/.ssh/canyougrab-deploy
+chmod 600 /root/.ssh/canyougrab-deploy
+cat > /root/.ssh/config <<'SSHCONF'
+Host github.com
+    IdentityFile /root/.ssh/canyougrab-deploy
+    StrictHostKeyChecking no
+SSHCONF
+
+# --- Clone repo ---
+git clone $REPO_URL /opt/canyougrab-repo
+cd /opt/canyougrab-repo
+git checkout $REF
+
+# --- Create virtualenv and directories ---
+python3 -m venv /opt/canyougrab/venv
+mkdir -p /opt/canyougrab/{api,portal,scripts}
+
+# --- Run deploy-app.sh ---
+bash config/deploy/deploy-app.sh $REF
+
+echo "=== canyougrab provision completed at \$(date -u) ==="
+
+# --- Signal completion ---
+touch /opt/canyougrab/.provision-complete
+CLOUD_INIT_EOF
 )
-USER_DATA_B64=$(echo "$USER_DATA" | base64 | tr -d '\n')
-CREATE_BODY="$CREATE_BODY, \"user_data\": \"$USER_DATA\""
 
-CREATE_BODY="$CREATE_BODY }"
+echo "==> Creating droplet: $NAME ($SIZE, $REGION, ref=$REF)"
 
-RESPONSE=$(do_api POST "droplets" -d "$CREATE_BODY")
+# --- Build DO API payload ---
+# Use python to build JSON properly (avoids shell escaping issues)
+CREATE_JSON=$(python3 -c "
+import json, sys
+payload = {
+    'name': '$NAME',
+    'region': '$REGION',
+    'size': '$SIZE',
+    'image': '$IMAGE',
+    'tags': ['$TAG'],
+    'monitoring': True,
+    'user_data': sys.stdin.read()
+}
+if '$VPC_UUID':
+    payload['vpc_uuid'] = '$VPC_UUID'
+if '$SSH_KEY_IDS':
+    payload['ssh_keys'] = ['$SSH_KEY_IDS']
+print(json.dumps(payload))
+" <<< "$USER_DATA")
+
+RESPONSE=$(do_api POST "droplets" -d "$CREATE_JSON")
 DROPLET_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['droplet']['id'])")
 echo "==> Droplet created: ID=$DROPLET_ID"
 
@@ -128,117 +186,61 @@ for net in d['networks']['v4']:
 
 echo "==> Public IP: $PUBLIC_IP, Private IP: $PRIVATE_IP"
 
-# --- Wait for SSH (test with a simple connection) ---
-echo -n "==> Waiting for SSH"
-SSH_READY=false
-for i in $(seq 1 60); do
+# --- Wait for cloud-init provisioning to complete (no SSH needed) ---
+# Poll via SSH for the sentinel file that cloud-init creates when done.
+# Cloud-init does ALL the work — we just wait and check.
+echo "==> Waiting for cloud-init provisioning to complete..."
+echo "    (full bootstrap runs via user_data — no SSH needed during setup)"
+echo "    Tail the log: ssh root@$PUBLIC_IP tail -f /var/log/canyougrab-provision.log"
+
+PROVISION_DONE=false
+for i in $(seq 1 90); do
     sleep 10
-    if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i "$SSH_KEY" root@"$PUBLIC_IP" "echo ok" 2>/dev/null; then
-        echo " connected!"
-        SSH_READY=true
+    # Single quick SSH check for the sentinel file
+    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o ServerAliveInterval=10 \
+           -i "$SSH_KEY" root@"$PUBLIC_IP" \
+           "test -f /opt/canyougrab/.provision-complete" 2>/dev/null; then
+        PROVISION_DONE=true
         break
     fi
-    echo -n "."
+    # Show progress every 60 seconds
+    if [ $((i % 6)) -eq 0 ]; then
+        echo "    ... still provisioning (${i}0s elapsed)"
+    fi
 done
-if [ "$SSH_READY" = false ]; then
-    echo " TIMEOUT — could not connect to $PUBLIC_IP via SSH"
-    echo "  Droplet ID: $DROPLET_ID (not destroyed, fix manually)"
+
+if [ "$PROVISION_DONE" = false ]; then
+    echo "==> WARNING: Provisioning did not complete within 15 minutes"
+    echo "    SSH in and check: tail /var/log/canyougrab-provision.log"
+    echo "    Droplet ID: $DROPLET_ID, IP: $PUBLIC_IP"
     exit 1
 fi
 
-# Wait a moment for cloud-init to apply SSH hardening from user_data
-sleep 5
+echo "==> Provisioning complete!"
 
-SSH_CMD="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=40 -i $SSH_KEY root@$PUBLIC_IP"
-
-# --- Read deploy key locally ---
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEPLOY_KEY="$SCRIPT_DIR/../env/github-deploy-key"
-if [ ! -f "$DEPLOY_KEY" ]; then
-    echo "ERROR: GitHub deploy key not found at $DEPLOY_KEY"
-    exit 1
-fi
-DEPLOY_KEY_B64=$(base64 < "$DEPLOY_KEY" | tr -d '\n')
-
-# --- Single SSH session: deploy key + cloud-init wait + full bootstrap ---
-# Everything in ONE connection to avoid SSH lockouts.
-echo "==> Bootstrapping droplet in a single SSH session..."
-$SSH_CMD bash -s "$REF" "$REPO_URL" "$DEPLOY_KEY_B64" <<'REMOTE_BOOTSTRAP'
-set -e
-REF="$1"
-REPO_URL="$2"
-DEPLOY_KEY_B64="$3"
-
-echo "[bootstrap] Installing GitHub deploy key"
-mkdir -p /root/.ssh
-echo "$DEPLOY_KEY_B64" | base64 -d > /root/.ssh/canyougrab-deploy
-chmod 600 /root/.ssh/canyougrab-deploy
-cat > /root/.ssh/config <<'GHCONF'
-Host github.com
-    IdentityFile /root/.ssh/canyougrab-deploy
-    StrictHostKeyChecking no
-GHCONF
-
-echo "[bootstrap] Waiting for cloud-init..."
-cloud-init status --wait 2>/dev/null || true
-echo "[bootstrap] Cloud-init done"
-
-echo "[bootstrap] Installing system packages"
-apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip nginx git curl 2>&1 | tail -3
-
-echo "[bootstrap] Installing node_exporter"
-cd /tmp
-curl -sLO https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz
-tar xf node_exporter-1.8.2.linux-amd64.tar.gz
-mv node_exporter-1.8.2.linux-amd64/node_exporter /usr/local/bin/
-useradd -rs /bin/false node_exporter 2>/dev/null || true
-cat > /etc/systemd/system/node_exporter.service <<'EOF'
-[Unit]
-Description=Node Exporter
-After=network.target
-[Service]
-User=node_exporter
-ExecStart=/usr/local/bin/node_exporter
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
-systemctl enable --now node_exporter
-
-echo "[bootstrap] Cloning repo"
-git clone "$REPO_URL" /opt/canyougrab-repo
-cd /opt/canyougrab-repo
-git checkout "$REF"
-echo "[bootstrap] Repo at: $(git log --oneline -1)"
-
-echo "[bootstrap] Creating virtualenv and directories"
-python3 -m venv /opt/canyougrab/venv
-mkdir -p /opt/canyougrab/{api,portal,scripts}
-
-echo "[bootstrap] Running deploy-app.sh"
-bash config/deploy/deploy-app.sh "$REF"
-
-echo "[bootstrap] SSL cert check"
-mkdir -p /etc/ssl
-if [ ! -f /etc/ssl/cloudflare-origin-cert.pem ]; then
-    echo "WARNING: No SSL cert at /etc/ssl/cloudflare-origin-cert.pem"
-fi
-
-echo "[bootstrap] DONE"
-REMOTE_BOOTSTRAP
+# --- Final health check ---
+HEALTHY=false
+for i in $(seq 1 6); do
+    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "$SSH_KEY" root@"$PUBLIC_IP" \
+           "curl -sf http://127.0.0.1:8000/health" 2>/dev/null; then
+        echo ""
+        HEALTHY=true
+        break
+    fi
+    sleep 5
+done
 
 echo ""
 echo "============================================"
-echo "Droplet provisioned successfully!"
+echo "Droplet provisioned!"
 echo "  Name:       $NAME"
 echo "  ID:         $DROPLET_ID"
 echo "  Public IP:  $PUBLIC_IP"
 echo "  Private IP: $PRIVATE_IP"
 echo "  Ref:        $REF"
+echo "  Healthy:    $HEALTHY"
 echo ""
 echo "Next steps:"
-echo "  1. Set up SSL cert: /etc/ssl/cloudflare-origin-cert.pem"
-echo "  2. Add to Prometheus: $PRIVATE_IP:9100"
-echo "  3. Switch traffic: bash config/deploy/switch-traffic.sh $PUBLIC_IP"
+echo "  1. Add to Prometheus: $PRIVATE_IP:9100"
+echo "  2. Switch traffic: bash config/deploy/switch-traffic.sh $PUBLIC_IP"
 echo "============================================"
