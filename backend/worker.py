@@ -78,6 +78,12 @@ def main():
     except Exception as e:
         logger.warning('WHOIS service unreachable at %s:%d: %s (will fall back to DNS-only)', WHOIS_HOSTNAME, WHOIS_PORT, e)
 
+    # Pre-load TLD registry (RDAP host list) so first lookup doesn't pay the DB cost
+    from tld_registry import _get_registry
+    registry = _get_registry()
+    disabled = sum(1 for v in registry.values() if v['whois_disabled'])
+    logger.info('TLD registry loaded: %d TLDs (%d with WHOIS disabled)', len(registry), disabled)
+
     # Recover any stale jobs from previous crash
     recover_stale_jobs()
 
