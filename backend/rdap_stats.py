@@ -51,6 +51,7 @@ def _ensure_table(conn):
                 rdap_error      INTEGER NOT NULL DEFAULT 0,
                 rdap_unsupported INTEGER NOT NULL DEFAULT 0,
                 whois_fallback  INTEGER NOT NULL DEFAULT 0,
+                rdap_rate_limited INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (tld, recorded_date)
             )
         """)
@@ -80,15 +81,16 @@ def _flush_to_db():
                     cur.execute("""
                         INSERT INTO rdap_tld_stats (tld, recorded_date,
                             rdap_success, rdap_domain_not_found, rdap_error,
-                            rdap_unsupported, whois_fallback)
-                        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s)
+                            rdap_unsupported, whois_fallback, rdap_rate_limited)
+                        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (tld, recorded_date)
                         DO UPDATE SET
                             rdap_success = rdap_tld_stats.rdap_success + EXCLUDED.rdap_success,
                             rdap_domain_not_found = rdap_tld_stats.rdap_domain_not_found + EXCLUDED.rdap_domain_not_found,
                             rdap_error = rdap_tld_stats.rdap_error + EXCLUDED.rdap_error,
                             rdap_unsupported = rdap_tld_stats.rdap_unsupported + EXCLUDED.rdap_unsupported,
-                            whois_fallback = rdap_tld_stats.whois_fallback + EXCLUDED.whois_fallback
+                            whois_fallback = rdap_tld_stats.whois_fallback + EXCLUDED.whois_fallback,
+                            rdap_rate_limited = rdap_tld_stats.rdap_rate_limited + EXCLUDED.rdap_rate_limited
                     """, (
                         tld,
                         outcomes.get('rdap_success', 0),
@@ -96,6 +98,7 @@ def _flush_to_db():
                         outcomes.get('rdap_error', 0),
                         outcomes.get('rdap_unsupported', 0),
                         outcomes.get('whois_fallback', 0),
+                        outcomes.get('rdap_rate_limited', 0),
                     ))
                 conn.commit()
             logger.info('Flushed RDAP stats: %d TLDs', len(snapshot))

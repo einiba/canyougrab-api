@@ -173,6 +173,23 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         record_rdap_outcome(tld, 'rdap_domain_not_found')
         return result
 
+    # RDAP rate limited (429) — trust DNS NXDOMAIN, don't wait for WHOIS
+    if lookup_source == 'rdap_rate_limited':
+        result = {
+            'domain': domain,
+            'available': True,
+            'confidence': 'medium',
+            'tld': tld,
+            'source': 'dns',
+            'checked_at': now,
+            'cache_age_seconds': 0,
+            'registration': None,
+        }
+        cache_domain(domain, result)
+        _profile_whois('rdap_rate_limited')
+        record_rdap_outcome(tld, 'rdap_rate_limited')
+        return result
+
     if whois_data is not None and whois_data.get('expiration_date'):
         # WHOIS found a registration — DNS was stale/wrong
         result = {

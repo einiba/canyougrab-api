@@ -79,6 +79,20 @@ def check_domain_whois(domain: str) -> dict | None:
                 'lookup_source': 'rdap_domain_not_found',
             }
 
+        # 429 means RDAP server rate limited us (after retries in rust-whois)
+        if resp.status_code == 429:
+            return {
+                'registrar': None,
+                'creation_date': None,
+                'expiration_date': None,
+                'updated_date': None,
+                'name_servers': None,
+                'status': None,
+                'whois_server': None,
+                'query_time_ms': None,
+                'lookup_source': 'rdap_rate_limited',
+            }
+
         resp.raise_for_status()
         data = resp.json()
     except httpx.TimeoutException:
