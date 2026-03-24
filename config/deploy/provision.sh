@@ -69,13 +69,17 @@ if [ -n "$SSH_KEY_IDS" ]; then
     CREATE_BODY="$CREATE_BODY, \"ssh_keys\": [$SSH_KEYS_JSON]"
 fi
 
-# Cloud-init user_data: harden SSH before first boot to prevent lockouts
+# Cloud-init user_data: harden SSH and set up VPC hosts before first boot
 USER_DATA=$(cat <<'CLOUD_INIT'
 #!/bin/bash
 # Harden SSH to prevent lockouts from rapid connections
 sed -i 's/^#\?MaxStartups.*/MaxStartups 30:50:80/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 30:50:80' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+
+# VPC internal hostnames
+grep -q 'unbound.canyougrab.internal' /etc/hosts || echo '10.108.0.5 unbound.canyougrab.internal' >> /etc/hosts
+grep -q 'rust-whois.canyougrab.internal' /etc/hosts || echo '10.108.0.8 rust-whois.canyougrab.internal' >> /etc/hosts
 CLOUD_INIT
 )
 USER_DATA_B64=$(echo "$USER_DATA" | base64 | tr -d '\n')
