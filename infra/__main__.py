@@ -20,5 +20,7 @@ if stack in ("dev", "prod"):
     import api_stack  # noqa: F401
 elif stack == "admin":
     import admin_stack  # noqa: F401
+elif stack == "rust-whois":
+    import rust_whois_stack  # noqa: F401
 else:
-    raise ValueError(f"Unknown stack: {stack}. Expected: dev, prod, or admin")
+    raise ValueError(f"Unknown stack: {stack}. Expected: dev, prod, admin, or rust-whois")
