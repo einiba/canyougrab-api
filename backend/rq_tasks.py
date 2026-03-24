@@ -5,6 +5,7 @@ function references as module.function_name.
 """
 
 import os
+import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -41,7 +42,11 @@ def process_domain_job(job_key: str):
 
     job_id = parts[1]
 
+    t_job_start = time.monotonic()
+
+    t0 = time.monotonic()
     job_data = claim_job(job_key)
+    t_claim = time.monotonic() - t0
     if job_data is None:
         logger.warning('Job %s expired or missing, skipping', job_key)
         return
@@ -50,17 +55,38 @@ def process_domain_job(job_key: str):
     queued_at = job_data['queued_at']
     resolver = _get_resolver()
 
-    logger.info('Processing job %s (%d domains)', job_id[:8], len(domains))
+    logger.info('Processing job %s (%d domains, concurrency=%d)',
+                job_id[:8], len(domains), BATCH_CONCURRENCY)
 
     try:
+        t0 = time.monotonic()
         with ThreadPoolExecutor(max_workers=BATCH_CONCURRENCY) as executor:
             futures = [
                 executor.submit(check_domain, domain, resolver)
                 for domain in domains
             ]
             results = [f.result() for f in futures]
+        t_pool = time.monotonic() - t0
 
+        t0 = time.monotonic()
         complete_job(job_id, results, queued_at=queued_at)
+        t_complete = time.monotonic() - t0
+
+        t_total = time.monotonic() - t_job_start
+
+        # Profiling summary
+        cache_hits = sum(1 for r in results if r.get('source') == 'cache')
+        dns_only = sum(1 for r in results if r.get('source') == 'dns')
+        whois_used = sum(1 for r in results if r.get('source') == 'whois')
+        errors = sum(1 for r in results if r.get('available') is None)
+
+        logger.info(
+            'JOB_PROFILE %s domains=%d claim_ms=%.1f pool_ms=%.1f complete_ms=%.1f '
+            'total_ms=%.1f cache=%d dns=%d whois=%d errors=%d',
+            job_id[:8], len(domains), t_claim * 1000, t_pool * 1000,
+            t_complete * 1000, t_total * 1000,
+            cache_hits, dns_only, whois_used, errors,
+        )
 
         # Push processing time to metrics list for the exporter to consume
         r = get_valkey()
