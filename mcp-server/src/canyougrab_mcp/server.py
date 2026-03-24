@@ -45,26 +45,24 @@ REMOTE_SECURITY = TransportSecuritySettings(
 
 
 class ChatGPTFastMCP(FastMCP):
-    """FastMCP variant that mirrors security schemes into the top-level tool descriptor."""
+    """FastMCP variant that only emits well-defined fields in tool descriptors."""
 
     async def list_tools(self) -> list[MCPTool]:
         tools = self._tool_manager.list_tools()
         result: list[MCPTool] = []
         for info in tools:
             meta = dict(info.meta or {})
-            security_schemes = meta.get("securitySchemes")
-            payload = {
+            payload: dict[str, object] = {
                 "name": info.name,
-                "title": info.title,
                 "description": info.description,
                 "inputSchema": info.parameters,
-                "outputSchema": info.output_schema,
-                "annotations": info.annotations,
-                "icons": info.icons,
-                "_meta": meta or None,
             }
-            if security_schemes is not None:
-                payload["securitySchemes"] = security_schemes
+            if info.title:
+                payload["title"] = info.title
+            if info.annotations:
+                payload["annotations"] = info.annotations
+            if meta:
+                payload["_meta"] = meta
             result.append(MCPTool.model_validate(payload))
         return result
 
