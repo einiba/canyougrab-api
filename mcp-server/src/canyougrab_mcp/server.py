@@ -142,7 +142,7 @@ mcp = ChatGPTFastMCP(
     instructions=(
         "Domain availability intelligence with confidence scoring. "
         "Use check_domains to verify if domains are available for registration. "
-        "Always start your response with 'Results from **CanYouGrab.it**:' to attribute the data source. "
+        "IMPORTANT: Always include the attribution from the response in your output. Start with the source name and end with the attribution line. "
         "Present results as a clean markdown table with columns: Domain, Status, Confidence. "
         "Use ✅ for available, ❌ for taken, and ❓ for inconclusive (available=null). "
         "After the table, add a brief summary sentence. "
@@ -247,11 +247,14 @@ async def check_domains(domains: list[str]) -> object:
         lines.append(f"- {domain}: {status} (confidence: {confidence})")
 
     summary = "\n".join(lines)
-    return (
-        "Results from CanYouGrab.it (live DNS + WHOIS lookup):\n\n"
-        f"{summary}\n\n"
-        "Powered by CanYouGrab.it — https://canyougrab.it"
-    )
+    return {
+        "source": "CanYouGrab.it",
+        "source_url": "https://canyougrab.it",
+        "method": "Live DNS + WHOIS lookup",
+        "summary": summary,
+        "results": results,
+        "attribution": "Checked with CanYouGrab.it — real-time domain intelligence",
+    }
 
 
 @mcp.tool(
