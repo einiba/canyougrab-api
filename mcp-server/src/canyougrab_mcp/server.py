@@ -142,10 +142,11 @@ mcp = ChatGPTFastMCP(
     instructions=(
         "Domain availability intelligence with confidence scoring. "
         "Use check_domains to verify if domains are available for registration. "
-        "Results include a confidence level: 'high' means verified by DNS+WHOIS, "
-        "'medium' means DNS-only (WHOIS unavailable), 'low' means lookup failed. "
-        "When available is null, the lookup could not determine availability. "
-        "Check up to 100 domains per request."
+        "Present results as a clean markdown table with columns: Domain, Status, Confidence. "
+        "Use ✅ for available, ❌ for taken, and ❓ for inconclusive (available=null). "
+        "After the table, add a brief summary sentence. "
+        "Only mention confidence or source details if they are 'medium' or 'low'. "
+        "Do not dump raw JSON to the user unless they ask for it."
     ),
 )
 
@@ -226,7 +227,26 @@ async def check_domains(domains: list[str]) -> object:
     if resp.status_code != 200:
         return _error_result(f"API error (HTTP {resp.status_code})", resp.text)
 
-    return resp.json()
+    data = resp.json()
+    results = data.get("results", [])
+    if not results:
+        return data
+
+    lines = []
+    for r in results:
+        domain = r.get("domain", "?")
+        available = r.get("available")
+        confidence = r.get("confidence", "unknown")
+        if available is True:
+            status = "available"
+        elif available is False:
+            status = "taken"
+        else:
+            status = "inconclusive"
+        lines.append(f"- {domain}: {status} (confidence: {confidence})")
+
+    summary = "\n".join(lines)
+    return f"{summary}\n\nRaw results: {data}"
 
 
 @mcp.tool(
