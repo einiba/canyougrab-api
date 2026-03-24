@@ -16,8 +16,8 @@ export const STRIPE_PUBLISHABLE_KEY = isDev
   : "pk_live_51TAgY4HWwGSUcGDUBDXCumqJ2b9arnP0ECAU9SsrLPpsutlLS9Z1CaUSs9qrkrG9kiVAlfaJ7TX5AEEqvG5O2BZE00y6PFDcwh";
 
 export const AUTH0_DOMAIN = isDev
-  ? "dev-4yl51qvnwwd6g7xe.us.auth0.com"
-  : "auth.canyougrab.it";
+  ? "dev-login.canyougrab.it"
+  : "login.canyougrab.it";
 export const AUTH0_CLIENT_ID = isDev
   ? "Xz0TZK9Z2E9wN55FJVQYsMHsLougZzRm"
   : "xeaTguUBeoeZg2PmetPVrnQmkud8Ikyq";
