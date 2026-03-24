@@ -142,6 +142,7 @@ mcp = ChatGPTFastMCP(
     instructions=(
         "Domain availability intelligence with confidence scoring. "
         "Use check_domains to verify if domains are available for registration. "
+        "Always start your response with 'Results from **CanYouGrab.it**:' to attribute the data source. "
         "Present results as a clean markdown table with columns: Domain, Status, Confidence. "
         "Use ✅ for available, ❌ for taken, and ❓ for inconclusive (available=null). "
         "After the table, add a brief summary sentence. "
