@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Prometheus exporter for RQ queue metrics on the canyougrab-api worker queue.
-Exposes queue depth, active worker count, and failed job count on :9122/metrics.
+Prometheus exporter for RQ queue metrics — multi-environment.
 
-Run as a systemd service alongside the API and worker:
+Watches multiple RQ queues (dev, prod, etc.) on the same Valkey instance
+and exposes per-environment metrics with an `environment` label.
+
+Environment config via RQ_ENVIRONMENTS (comma-separated):
+    RQ_ENVIRONMENTS=dev:queue:jobs:dev,prod:queue:jobs:prod
+
+Each entry is "name:queue_name". Metrics get labeled {environment="name"}.
+
+Run as a systemd service on the admin server:
     python scripts/rq_metrics_exporter.py
 """
 
@@ -24,19 +31,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 METRICS_PORT = int(os.environ.get('RQ_METRICS_PORT', '9122'))
-SCRAPE_INTERVAL = int(os.environ.get('RQ_METRICS_INTERVAL', '15'))  # seconds
-QUEUE_NAME = os.environ.get('VALKEY_QUEUE_NAME', 'canyougrab-jobs')
+SCRAPE_INTERVAL = int(os.environ.get('RQ_METRICS_INTERVAL', '15'))
 
-# Prometheus metrics
-queue_depth = Gauge('canyougrab_queue_depth', 'Number of pending jobs in the RQ queue')
-workers_active = Gauge('canyougrab_workers_active', 'Number of active RQ workers')
-workers_busy = Gauge('canyougrab_workers_busy', 'Number of RQ workers currently processing a job')
-failed_jobs = Gauge('canyougrab_failed_jobs_total', 'Number of jobs in the failed job registry')
-scheduled_jobs = Gauge('canyougrab_scheduled_jobs', 'Number of jobs in the scheduled registry')
-started_jobs = Gauge('canyougrab_started_jobs', 'Number of currently executing jobs')
+# Parse environment config: "dev:queue:jobs:dev,prod:queue:jobs:prod"
+# Falls back to single-environment mode for backward compatibility.
+def parse_environments():
+    env_str = os.environ.get('RQ_ENVIRONMENTS', '')
+    if env_str:
+        envs = {}
+        for entry in env_str.split(','):
+            entry = entry.strip()
+            # Format: "name:queue_name" — split on first colon only
+            parts = entry.split(':', 1)
+            if len(parts) == 2:
+                envs[parts[0]] = parts[1]
+            else:
+                logger.warning('Invalid environment entry: %s (expected name:queue_name)', entry)
+        return envs
+
+    # Backward compat: single queue from VALKEY_QUEUE_NAME
+    queue_name = os.environ.get('VALKEY_QUEUE_NAME', 'canyougrab-jobs')
+    env_name = os.environ.get('ENVIRONMENT', 'default')
+    return {env_name: queue_name}
+
+
+# Prometheus metrics — all labeled with environment
+queue_depth = Gauge('canyougrab_queue_depth', 'Pending jobs in RQ queue', ['environment'])
+workers_active = Gauge('canyougrab_workers_active', 'Active RQ workers', ['environment'])
+workers_busy = Gauge('canyougrab_workers_busy', 'Workers currently processing a job', ['environment'])
+failed_jobs = Gauge('canyougrab_failed_jobs_total', 'Jobs in the failed job registry', ['environment'])
+scheduled_jobs = Gauge('canyougrab_scheduled_jobs', 'Jobs in the scheduled registry', ['environment'])
+started_jobs = Gauge('canyougrab_started_jobs', 'Currently executing jobs', ['environment'])
 processing_time = Histogram(
     'canyougrab_processing_time_ms',
-    'Job processing time in milliseconds (completed_at - queued_at)',
+    'Job processing time in milliseconds',
+    ['environment'],
     buckets=[100, 250, 500, 1000, 2500, 5000, 10000, 25000, 45000, 60000, 90000, 120000],
 )
 exporter_info = Info('canyougrab_rq_exporter', 'RQ metrics exporter metadata')
@@ -51,55 +80,77 @@ def build_connection() -> redis.Redis:
     return redis.from_url(url, decode_responses=False)
 
 
-def collect_metrics(conn: redis.Redis, queue: Queue):
-    """Read RQ state and update Prometheus gauges."""
+def collect_metrics(conn: redis.Redis, queues: dict[str, Queue]):
+    """Read RQ state for each environment and update Prometheus gauges."""
+    # Get all workers once (they're shared across the connection)
     try:
-        queue_depth.set(queue.count)
-
         all_workers = Worker.all(connection=conn)
-        workers_active.set(len(all_workers))
-        workers_busy.set(sum(1 for w in all_workers if w.get_state() == 'busy'))
-
-        failed_registry = queue.failed_job_registry
-        failed_jobs.set(len(failed_registry))
-
-        scheduled_registry = queue.scheduled_job_registry
-        scheduled_jobs.set(len(scheduled_registry))
-
-        started_registry = queue.started_job_registry
-        started_jobs.set(len(started_registry))
-
-        # Drain processing times pushed by workers and observe into histogram
-        while True:
-            val = conn.rpop('metrics:processing_times')
-            if val is None:
-                break
-            try:
-                processing_time.observe(float(val))
-            except (ValueError, TypeError):
-                pass
-
     except redis.ConnectionError:
         logger.warning('Lost Valkey connection, will retry next cycle')
+        return
     except Exception:
-        logger.exception('Error collecting RQ metrics')
+        logger.exception('Error fetching workers')
+        return
+
+    # Build a map of queue_name -> list of workers listening on that queue
+    workers_by_queue: dict[str, list[Worker]] = {}
+    for w in all_workers:
+        for q in w.queues:
+            workers_by_queue.setdefault(q.name, []).append(w)
+
+    for env_name, queue in queues.items():
+        try:
+            queue_depth.labels(environment=env_name).set(queue.count)
+
+            env_workers = workers_by_queue.get(queue.name, [])
+            workers_active.labels(environment=env_name).set(len(env_workers))
+            workers_busy.labels(environment=env_name).set(
+                sum(1 for w in env_workers if w.get_state() == 'busy')
+            )
+
+            failed_jobs.labels(environment=env_name).set(len(queue.failed_job_registry))
+            scheduled_jobs.labels(environment=env_name).set(len(queue.scheduled_job_registry))
+            started_jobs.labels(environment=env_name).set(len(queue.started_job_registry))
+
+            # Drain processing times (keyed per environment)
+            metrics_key = f'metrics:processing_times:{env_name}'
+            # Also drain legacy key for backward compat
+            for key in [metrics_key, 'metrics:processing_times']:
+                while True:
+                    val = conn.rpop(key)
+                    if val is None:
+                        break
+                    try:
+                        processing_time.labels(environment=env_name).observe(float(val))
+                    except (ValueError, TypeError):
+                        pass
+
+        except Exception:
+            logger.exception('Error collecting metrics for environment %s', env_name)
 
 
 def main():
     conn = build_connection()
-
-    # Verify connectivity
     conn.ping()
     logger.info('Valkey connected')
 
-    queue = Queue(QUEUE_NAME, connection=conn)
-    exporter_info.info({'queue_name': QUEUE_NAME})
+    environments = parse_environments()
+    queues = {}
+    for env_name, queue_name in environments.items():
+        queues[env_name] = Queue(queue_name, connection=conn)
+        logger.info('Watching environment %s → queue %s', env_name, queue_name)
+
+    env_names = ','.join(environments.keys())
+    exporter_info.info({'environments': env_names})
 
     start_http_server(METRICS_PORT, addr='127.0.0.1')
-    logger.info('Serving Prometheus metrics on 127.0.0.1:%d/metrics (interval=%ds)', METRICS_PORT, SCRAPE_INTERVAL)
+    logger.info(
+        'Serving metrics on 127.0.0.1:%d/metrics (interval=%ds, environments=%s)',
+        METRICS_PORT, SCRAPE_INTERVAL, env_names,
+    )
 
     while True:
-        collect_metrics(conn, queue)
+        collect_metrics(conn, queues)
         time.sleep(SCRAPE_INTERVAL)
 
 
