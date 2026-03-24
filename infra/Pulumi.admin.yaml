@@ -1,0 +1,10 @@
+config:
+  digitalocean:token:
+    secure: AAABAJPnWgMfuU8x/UPYbJMjiZy5QGDrpxa1IcwM94SnO9X5tt78nd7BaBC5J7W94RHJllBXevoqVavVVr42HOC9kftRuOFLJ9Vsg3gr1ybofcP7DL3y+Pb/I4VMKM7MSIHXAnq5iQ==
+  cloudflare:apiToken:
+    secure: AAABAM1w2XouKS6zZ1sGhDCVEz8QrnNmbPTdNFs6KnrHBF+79iYVHYpzM6i4PqYjcVzm7AK901IAF5JUgiGHaUN0/lIcw1s9jTLHoekStt8oVXf1pw==
+  canyougrab-infra:ssh_key_fingerprint: "54934856"
+  canyougrab-infra:region: nyc3
+  canyougrab-infra:droplet_size: s-2vcpu-2gb
+  canyougrab-infra:valkey_password:
+    secure: AAABAIUJWdWHGzdK++gF5GlMbtHL5dYb/pJC2mEWvAwAnlhxEY+9EvJgk5dFrajvPTHLzcefi4M=
