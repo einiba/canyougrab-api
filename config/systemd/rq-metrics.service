@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=canyougrab
-EnvironmentFile=/etc/canyougrab/env
-# Watch both dev and prod queues, labeled separately
-Environment=RQ_ENVIRONMENTS=dev:queue:jobs:dev,prod:queue:jobs:prod
-WorkingDirectory=/opt/canyougrab/api
-ExecStart=/opt/canyougrab/venv/bin/python /opt/canyougrab-repo/scripts/rq_metrics_exporter.py
+User=root
+EnvironmentFile=/opt/canyougrab-admin/valkey.env
+Environment=RQ_METRICS_PORT=9122
+Environment=RQ_QUEUE_ENVIRONMENTS=dev:queue:jobs:dev,prod:queue:jobs:prod
+Environment=RQ_HOST_ENVIRONMENTS=dev:canyougrab-dev,dev:canyougrab-dev-green,prod:api
+ExecStart=/opt/canyougrab-admin/venv/bin/python /opt/canyougrab-repo/scripts/rq_metrics_exporter.py
 Restart=on-failure
 RestartSec=5
 

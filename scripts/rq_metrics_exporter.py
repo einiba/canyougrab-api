@@ -2,14 +2,14 @@
 """
 Prometheus exporter for RQ queue metrics — multi-environment.
 
-All workers share the same Valkey queue, so we distinguish environments
-by worker hostname. Configure via RQ_HOST_ENVIRONMENTS:
+Each environment has its own queue and workers are classified by hostname.
 
+Configure via:
+    RQ_QUEUE_ENVIRONMENTS=dev:queue:jobs:dev,prod:queue:jobs:prod
     RQ_HOST_ENVIRONMENTS=dev:canyougrab-dev,dev:canyougrab-dev-green,prod:api
 
-Each entry is "env_name:hostname_prefix". Workers whose hostname starts
-with the prefix are counted under that environment. Unmatched workers
-go under "unknown".
+Queue metrics (depth, failed, scheduled) come from per-env queues.
+Worker metrics (active, busy) come from hostname classification.
 
 Run as a systemd service on the admin server:
     python scripts/rq_metrics_exporter.py
@@ -31,7 +31,22 @@ logger = logging.getLogger(__name__)
 
 METRICS_PORT = int(os.environ.get('RQ_METRICS_PORT', '9122'))
 SCRAPE_INTERVAL = int(os.environ.get('RQ_METRICS_INTERVAL', '15'))
-QUEUE_NAME = os.environ.get('VALKEY_QUEUE_NAME', 'canyougrab-jobs')
+
+
+def parse_queue_environments():
+    """Parse RQ_QUEUE_ENVIRONMENTS into {env_name: queue_name} map."""
+    env_str = os.environ.get('RQ_QUEUE_ENVIRONMENTS', '')
+    if not env_str:
+        # Backward compat: single queue
+        queue_name = os.environ.get('VALKEY_QUEUE_NAME', 'canyougrab-jobs')
+        return {'default': queue_name}
+    mapping = {}
+    for entry in env_str.split(','):
+        entry = entry.strip()
+        parts = entry.split(':', 1)
+        if len(parts) == 2:
+            mapping[parts[0]] = parts[1]
+    return mapping
 
 
 def parse_host_environments():
@@ -46,14 +61,11 @@ def parse_host_environments():
         if len(parts) == 2:
             env_name, host_prefix = parts
             mapping[host_prefix] = env_name
-        else:
-            logger.warning('Invalid host mapping: %s (expected env:hostname)', entry)
     return mapping
 
 
 def classify_worker(hostname: str, host_map: dict[str, str]) -> str:
     """Return environment name for a worker based on its hostname."""
-    # Try exact match first, then prefix match (longest prefix wins)
     if hostname in host_map:
         return host_map[hostname]
     best_match = ''
@@ -90,7 +102,8 @@ def build_connection() -> redis.Redis:
     return redis.from_url(url, decode_responses=False)
 
 
-def collect_metrics(conn: redis.Redis, queue: Queue, host_map: dict[str, str], known_envs: set[str]):
+def collect_metrics(conn: redis.Redis, queues: dict[str, Queue],
+                    host_map: dict[str, str], known_envs: set[str]):
     """Read RQ state and update Prometheus gauges, grouped by environment."""
     try:
         all_workers = Worker.all(connection=conn)
@@ -101,7 +114,7 @@ def collect_metrics(conn: redis.Redis, queue: Queue, host_map: dict[str, str], k
         logger.exception('Error fetching workers')
         return
 
-    # Count workers per environment
+    # --- Worker metrics (by hostname) ---
     env_active: dict[str, int] = {e: 0 for e in known_envs}
     env_busy: dict[str, int] = {e: 0 for e in known_envs}
 
@@ -111,32 +124,47 @@ def collect_metrics(conn: redis.Redis, queue: Queue, host_map: dict[str, str], k
         if w.get_state() == 'busy':
             env_busy[env] = env_busy.get(env, 0) + 1
 
-    # Update worker gauges
     for env in set(list(env_active.keys()) + list(known_envs)):
         workers_active.labels(environment=env).set(env_active.get(env, 0))
         workers_busy.labels(environment=env).set(env_busy.get(env, 0))
 
-    # Queue-level metrics (shared queue, report under each known env)
-    # Since all environments share one queue, report queue depth once as "all"
-    # and also per-env so the dashboard variable works
-    depth = queue.count
-    failed_count = len(queue.failed_job_registry)
-    scheduled_count = len(queue.scheduled_job_registry)
-    started_count = len(queue.started_job_registry)
+    # --- Queue metrics (per-environment queue) ---
+    total_depth = 0
+    total_failed = 0
+    total_scheduled = 0
+    total_started = 0
 
-    for env in known_envs:
-        queue_depth.labels(environment=env).set(depth)
-        failed_jobs.labels(environment=env).set(failed_count)
-        scheduled_jobs.labels(environment=env).set(scheduled_count)
-        started_jobs.labels(environment=env).set(started_count)
+    for env_name, queue in queues.items():
+        try:
+            depth = queue.count
+            failed_count = len(queue.failed_job_registry)
+            scheduled_count = len(queue.scheduled_job_registry)
+            started_count = len(queue.started_job_registry)
 
-    # Drain processing times (no per-env breakdown available yet)
+            queue_depth.labels(environment=env_name).set(depth)
+            failed_jobs.labels(environment=env_name).set(failed_count)
+            scheduled_jobs.labels(environment=env_name).set(scheduled_count)
+            started_jobs.labels(environment=env_name).set(started_count)
+
+            total_depth += depth
+            total_failed += failed_count
+            total_scheduled += scheduled_count
+            total_started += started_count
+        except Exception:
+            logger.exception('Error collecting queue metrics for %s', env_name)
+
+    # "all" aggregate
+    queue_depth.labels(environment='all').set(total_depth)
+    failed_jobs.labels(environment='all').set(total_failed)
+    scheduled_jobs.labels(environment='all').set(total_scheduled)
+    started_jobs.labels(environment='all').set(total_started)
+
+    # --- Processing times (drain shared list) ---
     while True:
         val = conn.rpop('metrics:processing_times')
         if val is None:
             break
         try:
-            # Report under "all" since we can't attribute to a specific env
             processing_time.labels(environment='all').observe(float(val))
         except (ValueError, TypeError):
             pass
@@ -147,29 +175,31 @@ def main():
     conn.ping()
     logger.info('Valkey connected')
 
-    queue = Queue(QUEUE_NAME, connection=conn)
+    queue_envs = parse_queue_environments()
     host_map = parse_host_environments()
 
-    # Determine known environments from config
-    known_envs = set(host_map.values()) if host_map else {'default'}
-    known_envs.add('all')  # Always have an "all" bucket for aggregate metrics
+    queues = {}
+    for env_name, queue_name in queue_envs.items():
+        queues[env_name] = Queue(queue_name, connection=conn)
+        logger.info('Watching queue %s → environment %s', queue_name, env_name)
 
-    logger.info('Host-to-environment mapping: %s', host_map)
-    logger.info('Known environments: %s', known_envs)
+    known_envs = set(queue_envs.keys())
+    known_envs.update(host_map.values())
+    known_envs.add('all')
+
+    logger.info('Host mapping: %s', host_map)
+    logger.info('Known environments: %s', sorted(known_envs))
 
     exporter_info.info({
-        'queue_name': QUEUE_NAME,
+        'queues': ','.join(f'{k}={v}' for k, v in queue_envs.items()),
         'environments': ','.join(sorted(known_envs)),
     })
 
     start_http_server(METRICS_PORT, addr='127.0.0.1')
-    logger.info(
-        'Serving metrics on 127.0.0.1:%d/metrics (interval=%ds)',
-        METRICS_PORT, SCRAPE_INTERVAL,
-    )
+    logger.info('Serving metrics on 127.0.0.1:%d/metrics (interval=%ds)', METRICS_PORT, SCRAPE_INTERVAL)
 
     while True:
-        collect_metrics(conn, queue, host_map, known_envs)
+        collect_metrics(conn, queues, host_map, known_envs)
         time.sleep(SCRAPE_INTERVAL)
 
 
