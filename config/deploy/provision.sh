@@ -141,7 +141,7 @@ payload = {
 if '$VPC_UUID':
     payload['vpc_uuid'] = '$VPC_UUID'
 if '$SSH_KEY_IDS':
-    payload['ssh_keys'] = ['$SSH_KEY_IDS']
+    payload['ssh_keys'] = [int(k) for k in '$SSH_KEY_IDS'.split(',')]
 print(json.dumps(payload))
 " <<< "$USER_DATA")
 
