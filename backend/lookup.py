@@ -126,15 +126,15 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     if is_whois_disabled(tld):
         result = {
             'domain': domain,
-            'available': True,
-            'confidence': 'medium',
+            'available': None,
+            'confidence': 'low',
             'tld': tld,
             'source': 'dns',
             'checked_at': now,
             'cache_age_seconds': 0,
             'registration': None,
+            'error': f'whois_verification_unavailable_for_.{tld}',
         }
-        cache_domain(domain, result)  # skipped (medium confidence)
         if _profiling_enabled:
             logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 whois_outcome=tld_disabled total_ms=%.1f',
                         domain, t_cache * 1000, t_dns * 1000,
