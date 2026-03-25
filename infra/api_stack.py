@@ -97,6 +97,7 @@ def build_user_data(
     env_file_content: str,
     cf_token: str,
     tailscale_auth_key: str,
+    cached_le_cert_b64: str = "",
 ) -> str:
     """Cloud-init script that fully bootstraps a droplet."""
     return f"""#!/bin/bash
@@ -181,17 +182,22 @@ SSLKEY
 chmod 600 /etc/ssl/cloudflare-origin-key.pem
 
 # --- SSL: Let's Encrypt for API (DNS-01 via Cloudflare) ---
-# This works BEFORE DNS points to this droplet — proves ownership via DNS TXT record
 mkdir -p /etc/letsencrypt
 cat > /etc/letsencrypt/cloudflare.ini <<CFINI
 dns_cloudflare_api_token = {cf_token}
 CFINI
 chmod 600 /etc/letsencrypt/cloudflare.ini
 
-# Force fresh ACME account registration (each droplet is ephemeral)
-rm -rf /etc/letsencrypt/accounts
+# Restore cached cert from Pulumi state (avoids LE rate limits during blue-green)
+CACHED_CERT="{cached_le_cert_b64}"
+if [ -n "$CACHED_CERT" ]; then
+    echo "=== Restoring cached LE cert from Pulumi state ==="
+    echo "$CACHED_CERT" | base64 -d | tar xzf - -C /etc/letsencrypt/
+    echo "=== Cached cert restored ==="
+fi
 
-# Certbot may fail (rate limits, DNS propagation) — don't abort the whole bootstrap
+# Certbot: --keep-until-expiring means it only requests a new cert if
+# the cached one is missing or within 30 days of expiry
 if certbot certonly \\
     --dns-cloudflare \\
     --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \\
@@ -201,8 +207,8 @@ if certbot certonly \\
     --agree-tos \\
     --email eric.cocozza@canyougrab.it \\
     --cert-name api \\
-    --force-renewal; then
-    echo "=== Let's Encrypt cert obtained ==="
+    --keep-until-expiring; then
+    echo "=== Let's Encrypt cert ready ==="
     LE_CERT_OK=true
 else
     echo "=== WARNING: certbot failed, falling back to Cloudflare origin cert ==="
@@ -319,13 +325,17 @@ touch /opt/canyougrab/.provision-complete
 # ---------------------------------------------------------------------------
 from tailscale_key import server_key
 
+# Load cached LE cert from Pulumi config (empty string if not yet cached)
+cached_le_cert = config.get_secret("cached_le_cert") or pulumi.Output.from_input("")
+
 user_data = pulumi.Output.all(
     postgres_password, valkey_password, stripe_secret_key, stripe_webhook_secret,
-    cf_api_token, server_key.key,
+    cf_api_token, server_key.key, cached_le_cert,
 ).apply(lambda s: build_user_data(
     env_file_content=build_env_file(s[0], s[1], s[2], s[3]),
     cf_token=s[4],
     tailscale_auth_key=s[5],
+    cached_le_cert_b64=s[6],
 ))
 
 api_droplet = do.Droplet(
@@ -421,6 +431,27 @@ health_check = command.local.Command(
         )
     ),
     opts=pulumi.ResourceOptions(depends_on=[api_droplet, cf_api_dns]),
+)
+
+# ---------------------------------------------------------------------------
+# Cache LE cert to Pulumi state (for next blue-green deploy)
+# ---------------------------------------------------------------------------
+# After a successful deploy, tar up /etc/letsencrypt and save as a Pulumi
+# config secret. Next deploy restores this instead of requesting a new cert.
+_ts_hostname = f"{stack}-api"
+_pulumi_stack = f"eric-cocozza-canyougrab-it/canyougrab-infra/{stack}"
+cert_cache = command.local.Command(
+    f"{stack}-api-cert-cache",
+    create=(
+        f"CERT_B64=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "
+        f"root@{_ts_hostname} "
+        f"'cd /etc/letsencrypt && tar czf - live/ archive/ renewal/ 2>/dev/null | base64 -w0') && "
+        f"[ -n \"$CERT_B64\" ] && "
+        f"pulumi config set --secret --stack {_pulumi_stack} cached_le_cert \"$CERT_B64\" && "
+        f"echo 'LE cert cached to Pulumi state' || "
+        f"echo 'WARNING: No LE cert to cache'"
+    ),
+    opts=pulumi.ResourceOptions(depends_on=[health_check]),
 )
 
 # ---------------------------------------------------------------------------
