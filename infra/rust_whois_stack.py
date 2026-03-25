@@ -181,9 +181,12 @@ touch /opt/canyougrab/.provision-complete
 
 
 # ---------------------------------------------------------------------------
-# Droplet
+# Tailscale & Droplet
 # ---------------------------------------------------------------------------
 from tailscale_key import server_key
+from tailscale_cleanup import pre_deploy_cleanup, post_deploy_approve_routes
+
+ts_cleanup = pre_deploy_cleanup(droplet_name)
 
 user_data = pulumi.Output.all(
     gh_token or pulumi.Output.from_input(""),
@@ -201,7 +204,10 @@ whois_droplet = do.Droplet(
     monitoring=True,
     tags=[f"canyougrab-{stack}"],
     user_data=user_data,
+    opts=pulumi.ResourceOptions(depends_on=[ts_cleanup]),
 )
+
+ts_routes = post_deploy_approve_routes(droplet_name, depends_on=[whois_droplet])
 
 # ---------------------------------------------------------------------------
 # Firewall — VPC-only access (no public exposure)

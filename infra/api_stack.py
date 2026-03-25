@@ -321,9 +321,17 @@ touch /opt/canyougrab/.provision-complete
 
 
 # ---------------------------------------------------------------------------
-# API Droplet
+# Tailscale: clean up stale nodes before creating new droplet
 # ---------------------------------------------------------------------------
 from tailscale_key import server_key
+from tailscale_cleanup import pre_deploy_cleanup, post_deploy_approve_routes
+
+ts_hostname = f"{stack}-api"
+ts_cleanup = pre_deploy_cleanup(ts_hostname)
+
+# ---------------------------------------------------------------------------
+# API Droplet
+# ---------------------------------------------------------------------------
 
 # Load cached LE cert from Pulumi config (empty string if not yet cached)
 cached_le_cert = config.get_secret("cached_le_cert") or pulumi.Output.from_input("")
@@ -351,8 +359,16 @@ api_droplet = do.Droplet(
     user_data=user_data,
     # True blue-green: create new droplet BEFORE destroying old one.
     # DNS switches after the new droplet is up, then old one is deleted.
-    opts=pulumi.ResourceOptions(delete_before_replace=False),
+    opts=pulumi.ResourceOptions(
+        delete_before_replace=False,
+        depends_on=[ts_cleanup],
+    ),
 )
+
+# ---------------------------------------------------------------------------
+# Tailscale: approve routes after droplet is up
+# ---------------------------------------------------------------------------
+ts_routes = post_deploy_approve_routes(ts_hostname, depends_on=[api_droplet])
 
 # ---------------------------------------------------------------------------
 # Cloudflare DNS Records (source of truth for all DNS)

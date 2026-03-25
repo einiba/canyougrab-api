@@ -84,7 +84,7 @@ echo "=== admin provision started at $(date -u) ==="
 curl -fsSL https://tailscale.com/install.sh | sh
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/99-tailscale.conf
 sysctl -p /etc/sysctl.d/99-tailscale.conf
-tailscale up --auth-key={tailscale_auth_key} --ssh --hostname=admin --advertise-routes=10.108.0.0/20
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname=admin --advertise-routes={VPC_CIDR_OLD}
 echo "=== Tailscale connected (advertising VPC routes) ==="
 
 # --- SSH hardening ---
@@ -369,9 +369,12 @@ mkdir -p /opt/canyougrab && touch /opt/canyougrab/.provision-complete
 
 
 # ---------------------------------------------------------------------------
-# Admin Droplet
+# Tailscale & Admin Droplet
 # ---------------------------------------------------------------------------
 from tailscale_key import server_key
+from tailscale_cleanup import pre_deploy_cleanup, post_deploy_approve_routes
+
+ts_cleanup = pre_deploy_cleanup("admin")
 
 user_data = pulumi.Output.all(
     valkey_password, do_api_token, slack_webhook_url, server_key.key,
@@ -388,7 +391,10 @@ admin_droplet = do.Droplet(
     monitoring=True,
     tags=["canyougrab-admin"],
     user_data=user_data,
+    opts=pulumi.ResourceOptions(depends_on=[ts_cleanup]),
 )
+
+ts_routes = post_deploy_approve_routes("admin", depends_on=[admin_droplet])
 
 # ---------------------------------------------------------------------------
 # Cloudflare DNS (both CF-proxied)

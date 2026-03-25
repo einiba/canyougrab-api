@@ -185,6 +185,10 @@ touch /opt/canyougrab/.provision-complete
 # Tailscale
 # ---------------------------------------------------------------------------
 from tailscale_key import server_key
+from tailscale_cleanup import pre_deploy_cleanup, post_deploy_approve_routes
+
+ts_hostname = droplet_name.replace('.canyougrab.it', '')
+ts_cleanup = pre_deploy_cleanup(ts_hostname)
 
 # ---------------------------------------------------------------------------
 # Droplet
@@ -202,7 +206,10 @@ unbound_droplet = do.Droplet(
     monitoring=True,
     tags=["canyougrab-unbound"],
     user_data=user_data,
+    opts=pulumi.ResourceOptions(depends_on=[ts_cleanup]),
 )
+
+ts_routes = post_deploy_approve_routes(ts_hostname, depends_on=[unbound_droplet])
 
 # ---------------------------------------------------------------------------
 # CF DNS — unbound.canyougrab.it → VPC private IP
