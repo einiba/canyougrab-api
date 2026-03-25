@@ -77,20 +77,25 @@ if [ -f "$REPO_DIR/config/env/cloudflare-origin-cert.pem" ]; then
     echo "==> SSL certs synced"
 fi
 
-# --- Sync nginx config (env-specific) ---
+# --- Sync nginx config ---
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-# Only install configs matching this environment
-for f in "$REPO_DIR/config/nginx/${CANYOUGRAB_ENV}-"*.conf; do
-    [ -f "$f" ] && cp "$f" /etc/nginx/sites-enabled/
-done
-# Also install shared configs (no env prefix)
-for f in "$REPO_DIR/config/nginx/"*.conf; do
-    basename="$(basename "$f")"
-    case "$basename" in dev-*|prod-*) continue;; esac
-    cp "$f" /etc/nginx/sites-enabled/
-done
-nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
-echo "==> Nginx synced ($CANYOUGRAB_ENV)"
+# If cloud-init (Pulumi) already wrote api.conf with LE cert paths, don't
+# overwrite with repo configs that use different SSL paths.
+if [ -f /etc/nginx/sites-enabled/api.conf ]; then
+    echo "==> Nginx: Pulumi-managed configs detected, skipping repo sync"
+else
+    # Standalone deploy (no Pulumi) — use repo configs
+    for f in "$REPO_DIR/config/nginx/${CANYOUGRAB_ENV}-"*.conf; do
+        [ -f "$f" ] && cp "$f" /etc/nginx/sites-enabled/
+    done
+    for f in "$REPO_DIR/config/nginx/"*.conf; do
+        basename="$(basename "$f")"
+        case "$basename" in dev-*|prod-*) continue;; esac
+        cp "$f" /etc/nginx/sites-enabled/
+    done
+    nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
+    echo "==> Nginx synced ($CANYOUGRAB_ENV)"
+fi
 
 # --- Enable and restart services ---
 systemctl enable canyougrab-api canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3 canyougrab-watchdog.timer 2>/dev/null || true
