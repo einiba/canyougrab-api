@@ -1,7 +1,7 @@
 config:
   digitalocean:token:
-    secure: AAABAGueCViInQI6q8/pzxNOmFb6Gyw+SALcIDxlRBnbiO2xRuBcRoJXFR4gm5JTGYpM/oGI2HgAfIxiJO+Q11Fon3WSc7J8lahis9jZkkXOL77k7fNp63koPiEwNYWrCXfitzdxkw==
-  canyougrab-infra:ssh_key_fingerprint: "54934856"
+    secure: AAABAN/dD++mmlUxA1yusJO1ltH77Twru/9SpKyJ0Lc7Qxoj6TaBELAnZr9mqm5FBrpQPio55HpnqX8JwuZuqi9J8yA7TnrYf1iC46pQPKsyhme7UYUMZ7L1aytYxDmhVeXhlskaow==
+  canyougrab-infra:ssh_key_fingerprint: "55156888"
   canyougrab-infra:region: nyc3
   canyougrab-infra:droplet_size: s-1vcpu-1gb
   canyougrab-infra:git_ref: dev

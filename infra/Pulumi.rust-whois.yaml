@@ -9,3 +9,5 @@ config:
   canyougrab-infra:gh_token:
     secure: AAABAKvVqTd8I6jUIkaOM0iSopqRE+gVRcC6UzosQrwatIepw+/Qf7RiWE52zQJ4eYjqO719H6UvkzpP7U58YFjbMyKOua9c
   canyougrab-infra:release_version: v0.2.2
+  cloudflare:apiToken:
+    secure: AAABAAS4QHxTkuHXe0f+OD3TvH3T86Yfwa79KNbBtxFyfA8m+kG1wFeNQNyG/5Y8KpJc13XJWds39NShkTfAFuuyjVyo+TdUoou/90mrFm1eX9Lbhg==

@@ -20,9 +20,9 @@ if stack in ("dev", "prod"):
     import api_stack  # noqa: F401
 elif stack == "admin":
     import admin_stack  # noqa: F401
-elif stack == "rust-whois":
+elif stack in ("rust-whois", "dev-rust-whois"):
     import rust_whois_stack  # noqa: F401
-elif stack == "unbound":
+elif stack in ("unbound", "dev-unbound"):
     import unbound_stack  # noqa: F401
 else:
-    raise ValueError(f"Unknown stack: {stack}. Expected: dev, prod, admin, rust-whois, or unbound")
+    raise ValueError(f"Unknown stack: {stack}")

@@ -14,12 +14,12 @@ import pulumi_cloudflare as cf
 import pulumi_command as command
 from pathlib import Path
 from shared import (
-    CF_ZONE_ID, VPC_ID, VPC_CIDR,
-    UNBOUND_IP, RUST_WHOIS_IP,
-    DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
+    CF_ZONE_ID, VPC_ID_OLD, VPC_ID_NEW, VPC_CIDR_OLD, VPC_CIDR_NEW,
+    DEPLOY_KEY_PATH,
 )
 import base64
 
+stack = pulumi.get_stack()
 config = pulumi.Config()
 
 # Config
@@ -31,10 +31,16 @@ repo_owner = config.get("repo_owner") or "einiba"
 repo_name = config.get("repo_name") or "canyougrab-whois-engine"
 gh_token = config.get_secret("gh_token")  # needed for private repo releases
 
-# Service config — bind to 0.0.0.0 so it works regardless of VPC IP assignment
+# Per-environment config
+is_dev = stack.startswith("dev")
+vpc_id = config.get("vpc_id") or (VPC_ID_NEW if is_dev else VPC_ID_OLD)
+vpc_cidr = VPC_CIDR_NEW if is_dev else VPC_CIDR_OLD
+whois_dns_hostname = "dev-rust-whois.canyougrab.it" if is_dev else "rust-whois.canyougrab.it"
+droplet_name = "dev-rust-whois" if is_dev else "canyougrab-rust-whois"
+
+# Service config
 bind_ip = "0.0.0.0"
 bind_port = "3000"
-whois_hostname = "rust-whois.canyougrab.it"  # CF DNS → VPC private IP
 concurrent_queries = config.get("concurrent_queries") or "50"
 cache_ttl = config.get("cache_ttl") or "3600"
 cache_max = config.get("cache_max") or "10000"
@@ -74,9 +80,7 @@ sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-# --- VPC internal hostnames ---
-echo '{UNBOUND_IP} unbound.canyougrab.internal' >> /etc/hosts
-echo '{RUST_WHOIS_IP} rust-whois.canyougrab.internal' >> /etc/hosts
+# No VPC hosts entries needed — rust-whois doesn't depend on other VPC services
 
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive
@@ -179,15 +183,15 @@ user_data = pulumi.Output.all(
 ).apply(lambda s: build_user_data(s[0]))
 
 whois_droplet = do.Droplet(
-    "rust-whois",
-    name="canyougrab-rust-whois",
+    f"{stack}-droplet",
+    name=droplet_name,
     image="ubuntu-24-04-x64",
     region=region,
     size=droplet_size,
-    vpc_uuid=VPC_ID,
+    vpc_uuid=vpc_id,
     ssh_keys=[ssh_key_fingerprint],
     monitoring=True,
-    tags=["canyougrab-rust-whois"],
+    tags=[f"canyougrab-{stack}"],
     user_data=user_data,
 )
 
@@ -195,14 +199,14 @@ whois_droplet = do.Droplet(
 # Firewall — VPC-only access (no public exposure)
 # ---------------------------------------------------------------------------
 whois_firewall = do.Firewall(
-    "rust-whois-firewall",
-    name="canyougrab-rust-whois-fw",
+    f"{stack}-firewall",
+    name=f"canyougrab-{stack}-fw",
     droplet_ids=[whois_droplet.id],
     inbound_rules=[
         # WHOIS service (VPC only — API droplets connect here)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="3000",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
         # SSH
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="22",
@@ -210,7 +214,7 @@ whois_firewall = do.Firewall(
         # Node exporter (VPC only)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="9100",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
     ],
     outbound_rules=[
         do.FirewallOutboundRuleArgs(
@@ -231,9 +235,9 @@ whois_firewall = do.Firewall(
 # deploys just update the DNS record and workers pick up the new IP.
 # ---------------------------------------------------------------------------
 cf_whois_dns = cf.DnsRecord(
-    "rust-whois-dns",
+    f"{stack}-dns",
     zone_id=CF_ZONE_ID,
-    name=whois_hostname,
+    name=whois_dns_hostname,
     type="A",
     content=whois_droplet.ipv4_address_private,
     proxied=False,
@@ -244,7 +248,7 @@ cf_whois_dns = cf.DnsRecord(
 # Health check — SSH to public IP, curl the VPC-bound service
 # ---------------------------------------------------------------------------
 health_check = command.local.Command(
-    "rust-whois-health-check",
+    f"{stack}-health-check",
     create=pulumi.Output.all(
         whois_droplet.ipv4_address, whois_droplet.ipv4_address_private,
     ).apply(lambda ips: (
@@ -265,7 +269,7 @@ pulumi.export("droplet_id", whois_droplet.id)
 pulumi.export("droplet_name", whois_droplet.name)
 pulumi.export("public_ip", whois_droplet.ipv4_address)
 pulumi.export("private_ip", whois_droplet.ipv4_address_private)
-pulumi.export("dns_hostname", whois_hostname)
+pulumi.export("dns_hostname", whois_dns_hostname)
 pulumi.export("service_url", pulumi.Output.concat("http://", whois_droplet.ipv4_address_private, f":{bind_port}"))
 pulumi.export("release_version", release_version)
 pulumi.export("health_check", health_check.stdout)

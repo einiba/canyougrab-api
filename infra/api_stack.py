@@ -7,9 +7,11 @@ import pulumi_command as command
 import base64
 from pathlib import Path
 from shared import (
-    CF_ZONE_ID, VPC_ID, VPC_CIDR,
-    UNBOUND_IP, UNBOUND_HOSTNAME, RUST_WHOIS_IP, RUST_WHOIS_HOSTNAME, REPO_ROOT,
-    DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
+    CF_ZONE_ID,
+    VPC_ID_OLD, VPC_ID_NEW, VPC_CIDR_OLD, VPC_CIDR_NEW,
+    UNBOUND_HOSTNAME, RUST_WHOIS_HOSTNAME,
+    DEV_UNBOUND_HOSTNAME, DEV_RUST_WHOIS_HOSTNAME,
+    REPO_ROOT, DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
 )
 
 # ---------------------------------------------------------------------------
@@ -46,10 +48,17 @@ auth0_audience = config.get("auth0_audience") or "https://api.canyougrab.it"
 
 ssh_key_fingerprint = config.require("ssh_key_fingerprint")
 
-# VPC
-vpc_id = config.get("vpc_id") or VPC_ID
-UNBOUND_IP = "10.108.0.5"
-RUST_WHOIS_IP = "10.108.0.8"
+# Per-environment VPC and service hostnames
+if stack == "dev":
+    vpc_id = config.get("vpc_id") or VPC_ID_NEW
+    vpc_cidr = VPC_CIDR_NEW
+    unbound_hostname = DEV_UNBOUND_HOSTNAME
+    whois_hostname = DEV_RUST_WHOIS_HOSTNAME
+else:
+    vpc_id = config.get("vpc_id") or VPC_ID_OLD
+    vpc_cidr = VPC_CIDR_OLD
+    unbound_hostname = UNBOUND_HOSTNAME
+    whois_hostname = RUST_WHOIS_HOSTNAME
 
 # ---------------------------------------------------------------------------
 # Read local files
@@ -74,8 +83,8 @@ VALKEY_PORT={valkey_port}
 VALKEY_PASSWORD={vk_pass}
 VALKEY_USERNAME=default
 VALKEY_QUEUE_NAME=queue:jobs:{stack}
-WHOIS_HOSTNAME={RUST_WHOIS_HOSTNAME}
-DNS_RESOLVER_HOSTNAME={UNBOUND_HOSTNAME}
+WHOIS_HOSTNAME={whois_hostname}
+DNS_RESOLVER_HOSTNAME={unbound_hostname}
 STRIPE_SECRET_KEY={stripe_key}
 STRIPE_WEBHOOK_SECRET={stripe_wh}
 AUTH0_DOMAIN={auth0_domain}
@@ -375,7 +384,7 @@ api_firewall = do.Firewall(
         # Node exporter (VPC only)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="9100",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
     ],
     outbound_rules=[
         do.FirewallOutboundRuleArgs(

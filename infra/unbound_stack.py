@@ -12,15 +12,20 @@ import pulumi_digitalocean as do
 import pulumi_cloudflare as cf
 import pulumi_command as command
 from pathlib import Path
-from shared import CF_ZONE_ID, VPC_ID, VPC_CIDR, RUST_WHOIS_HOSTNAME
+from shared import CF_ZONE_ID, VPC_ID_OLD, VPC_ID_NEW, VPC_CIDR_OLD, VPC_CIDR_NEW
 
+stack = pulumi.get_stack()
 config = pulumi.Config()
 
 droplet_size = config.get("droplet_size") or "s-1vcpu-2gb"
 region = config.get("region") or "nyc3"
 ssh_key_fingerprint = config.require("ssh_key_fingerprint")
 
-UNBOUND_HOSTNAME = "unbound.canyougrab.it"
+is_dev = stack.startswith("dev")
+vpc_id = config.get("vpc_id") or (VPC_ID_NEW if is_dev else VPC_ID_OLD)
+vpc_cidr = VPC_CIDR_NEW if is_dev else VPC_CIDR_OLD
+UNBOUND_HOSTNAME = "dev-unbound.canyougrab.it" if is_dev else "unbound.canyougrab.it"
+droplet_name = "dev-unbound.canyougrab.it" if is_dev else "unbound.canyougrab.it"
 
 # ---------------------------------------------------------------------------
 # Unbound config — bind to 0.0.0.0, ACL limits to VPC
@@ -36,7 +41,7 @@ UNBOUND_CONF = f"""server:
 
     # Access control — localhost and VPC subnet only
     access-control: 127.0.0.0/8 allow
-    access-control: {VPC_CIDR} allow
+    access-control: {vpc_cidr} allow
     access-control: 0.0.0.0/0 refuse
 
     # Performance
@@ -169,12 +174,12 @@ touch /opt/canyougrab/.provision-complete
 # Droplet
 # ---------------------------------------------------------------------------
 unbound_droplet = do.Droplet(
-    "unbound",
-    name="unbound.canyougrab.it",
+    f"{stack}-droplet",
+    name=droplet_name,
     image="ubuntu-24-04-x64",
     region=region,
     size=droplet_size,
-    vpc_uuid=VPC_ID,
+    vpc_uuid=vpc_id,
     ssh_keys=[ssh_key_fingerprint],
     monitoring=True,
     tags=["canyougrab-unbound"],
@@ -185,7 +190,7 @@ unbound_droplet = do.Droplet(
 # CF DNS — unbound.canyougrab.it → VPC private IP
 # ---------------------------------------------------------------------------
 cf_unbound_dns = cf.DnsRecord(
-    "unbound-dns",
+    f"{stack}-dns",
     zone_id=CF_ZONE_ID,
     name=UNBOUND_HOSTNAME,
     type="A",
@@ -198,17 +203,17 @@ cf_unbound_dns = cf.DnsRecord(
 # Firewall — DNS on VPC only, SSH public
 # ---------------------------------------------------------------------------
 unbound_firewall = do.Firewall(
-    "unbound-firewall",
-    name="canyougrab-unbound-fw",
+    f"{stack}-firewall",
+    name=f"canyougrab-{stack}-fw",
     droplet_ids=[unbound_droplet.id],
     inbound_rules=[
         # DNS (VPC only)
         do.FirewallInboundRuleArgs(
             protocol="udp", port_range="53",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="53",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
         # SSH
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="22",
@@ -216,7 +221,7 @@ unbound_firewall = do.Firewall(
         # Node exporter (VPC only)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="9100",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[vpc_cidr]),
     ],
     outbound_rules=[
         do.FirewallOutboundRuleArgs(
@@ -235,7 +240,7 @@ unbound_firewall = do.Firewall(
 # Health check — SSH in, test DNS resolution
 # ---------------------------------------------------------------------------
 health_check = command.local.Command(
-    "unbound-health-check",
+    f"{stack}-health-check",
     create=unbound_droplet.ipv4_address.apply(
         lambda ip: (
             f"for i in $(seq 1 60); do "
