@@ -345,8 +345,17 @@ def _create_remote_app():
         async with mcp.session_manager.run():
             yield
 
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def health_check(request):
+        return JSONResponse({"status": "ok"})
+
     return Starlette(
-        routes=[Mount("/", app=mcp.streamable_http_app())],
+        routes=[
+            Route("/health", health_check),
+            Mount("/", app=mcp.streamable_http_app()),
+        ],
         middleware=[
             Middleware(
                 CORSMiddleware,
