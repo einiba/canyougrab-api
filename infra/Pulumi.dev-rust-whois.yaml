@@ -7,3 +7,5 @@ config:
   canyougrab-infra:release_version: v0.2.2
   canyougrab-infra:gh_token:
     secure: AAABAA6+gxXw2VSC5+1C4yH8aochQOZgkD76wdyIFNY3QtXzKWaOK0QLIOJvBORmWyNhb2WDOBSug9qMgfL/P/WwRXNCcW2J
+  tailscale:apiKey:
+    secure: AAABAOQJHSyz/zkz5i8ZbE6M+Pu1K3l2T4w9CejSDNCcB1Sld9lnGKi9scmAhSBF2jhHaIApBsgkCSYI3vAZgJXRdBBT0eJugp8dz1v/PIgn7Nf0c7xIe3ao3ruL

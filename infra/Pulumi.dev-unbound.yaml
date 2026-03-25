@@ -5,3 +5,5 @@ config:
     secure: AAABAED8f+bLMHxTtZvsl69fnZVXdQbpuZniiZVhHcMD4wtvUu/ayifwIEU3MPEKMLulm6rhqMQ5hi9ehmdFBB2mabjNpy9hrf9Z8h9MDmf37g39uw==
   canyougrab-infra:ssh_key_fingerprint: "55156888"
   canyougrab-infra:droplet_size: s-1vcpu-2gb
+  tailscale:apiKey:
+    secure: AAABAMkoXvt9q0NwfrgwMpZNsfPB1PTZwTxHim1j5lbx79lVb5OcZ0mBZKE4quGZoXTN9rnjoyU4xHezkYl4kyoAhf87rUcUoRrLi7UnWquikenZ9ENzfPoV7gS2
