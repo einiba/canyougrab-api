@@ -202,12 +202,21 @@ def health_ready():
     return result
 
 
+# Synthetic test domains:
+# - example.com: registered, exercises DNS (Unbound) → expects available=False
+# - _healthcheck-not-registered.com: unregistered, exercises DNS (NXDOMAIN) → rust-whois (RDAP 404) → expects available=True
+SYNTHETIC_REGISTERED = "example.com"
+SYNTHETIC_AVAILABLE = "_healthcheck-not-registered.com"
+
+
 @router.get("/health/deep")
 def health_deep():
     """Tier 3: Synthetic transaction — full pipeline verification.
 
-    Enqueues a real lookup for example.com, waits for completion,
-    and verifies the result contains expected data.
+    Enqueues two domain lookups to exercise every service:
+    1. example.com (registered) — DNS returns NOERROR → proves Unbound works
+    2. _healthcheck-not-registered.com (unregistered) — DNS returns NXDOMAIN
+       → worker calls rust-whois RDAP → RDAP returns 404 → proves rust-whois works
     """
     now = time.time()
 
@@ -225,19 +234,19 @@ def health_deep():
     steps = {}
 
     try:
-        # Step 1: Enqueue synthetic job
+        # Step 1: Enqueue synthetic job with both test domains
         t0 = time.monotonic()
         v = get_valkey()
         job_id = create_job(
             job_id=correlation_id,
             consumer="healthcheck",
-            domains=["example.com"],
+            domains=[SYNTHETIC_REGISTERED, SYNTHETIC_AVAILABLE],
         )
         steps["enqueue"] = {"status": "ok", "latency_ms": round((time.monotonic() - t0) * 1000)}
 
-        # Step 2: Poll for completion (timeout: 15 seconds)
+        # Step 2: Poll for completion (timeout: 20 seconds — WHOIS path is slower)
         t0 = time.monotonic()
-        poll_timeout = 15.0
+        poll_timeout = 20.0
         poll_interval = 0.5
         elapsed = 0
         result = None
@@ -259,30 +268,50 @@ def health_deep():
 
         steps["processing"] = {"status": "ok", "latency_ms": round(elapsed * 1000)}
 
-        # Step 3: Verify result
+        # Step 3: Verify both results
         t0 = time.monotonic()
         results_list = result if isinstance(result, list) else [result]
-        example_result = results_list[0] if results_list else {}
+        results_by_domain = {r.get("domain"): r for r in results_list if isinstance(r, dict)}
 
-        if example_result.get("available") is False:
-            steps["verification"] = {"status": "ok", "latency_ms": round((time.monotonic() - t0) * 1000)}
+        verification_errors = []
+
+        # Verify registered domain (exercises Unbound)
+        reg = results_by_domain.get(SYNTHETIC_REGISTERED, {})
+        if reg.get("available") is False:
+            steps["dns_path"] = {"status": "ok", "domain": SYNTHETIC_REGISTERED, "available": False}
         else:
-            steps["verification"] = {
-                "status": "error",
-                "latency_ms": round((time.monotonic() - t0) * 1000),
-                "error": f"expected available=False for example.com, got {example_result.get('available')}",
-            }
-            raise Exception("Unexpected result for example.com")
+            steps["dns_path"] = {"status": "error", "domain": SYNTHETIC_REGISTERED, "error": f"expected available=False, got {reg.get('available')}"}
+            verification_errors.append(f"{SYNTHETIC_REGISTERED}: expected registered")
+
+        # Verify unregistered domain (exercises Unbound + rust-whois)
+        avail = results_by_domain.get(SYNTHETIC_AVAILABLE, {})
+        if avail.get("available") is True:
+            steps["whois_path"] = {"status": "ok", "domain": SYNTHETIC_AVAILABLE, "available": True}
+        elif avail.get("available") is None:
+            # WHOIS might have timed out or errored — service reachable but degraded
+            steps["whois_path"] = {"status": "degraded", "domain": SYNTHETIC_AVAILABLE, "available": None, "error": avail.get("error", "whois returned None")}
+        else:
+            steps["whois_path"] = {"status": "error", "domain": SYNTHETIC_AVAILABLE, "error": f"expected available=True, got {avail.get('available')}"}
+            verification_errors.append(f"{SYNTHETIC_AVAILABLE}: expected available")
+
+        steps["verification"] = {"status": "ok" if not verification_errors else "error", "latency_ms": round((time.monotonic() - t0) * 1000)}
+
+        if verification_errors:
+            raise Exception("; ".join(verification_errors))
 
         total_ms = round((time.monotonic() - start) * 1000)
 
         # Reset circuit breaker on success
         _deep_circuit["failures"] = 0
 
+        # Determine overall: healthy if both paths ok, degraded if whois path degraded
+        whois_status = steps.get("whois_path", {}).get("status", "ok")
+        overall = "healthy" if whois_status == "ok" else "degraded"
+
         return {
-            "status": "healthy",
+            "status": overall,
             "synthetic_check": {
-                "domain": "example.com",
+                "domains": [SYNTHETIC_REGISTERED, SYNTHETIC_AVAILABLE],
                 "result": "completed",
                 "total_latency_ms": total_ms,
                 "steps": steps,
@@ -301,7 +330,7 @@ def health_deep():
         return {
             "status": "unhealthy",
             "synthetic_check": {
-                "domain": "example.com",
+                "domains": [SYNTHETIC_REGISTERED, SYNTHETIC_AVAILABLE],
                 "result": "failed",
                 "total_latency_ms": total_ms,
                 "steps": steps,
