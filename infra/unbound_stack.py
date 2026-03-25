@@ -110,6 +110,14 @@ sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
+# --- Disable systemd-resolved stub listener (conflicts with unbound on port 53) ---
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/no-stub.conf <<'RESOLVED'
+[Resolve]
+DNSStubListener=no
+RESOLVED
+systemctl restart systemd-resolved
+
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
