@@ -353,10 +353,22 @@ def authorize(request: Request):
 
     registered_client = _get_registered_client(client_id) if client_id else None
     if client_id and not registered_client:
-        return JSONResponse(
-            {"error": "invalid_client", "error_description": "Unknown client_id"},
-            status_code=400,
-        )
+        # Auto-register unknown clients (e.g. published ChatGPT apps that skip
+        # Dynamic Client Registration). Store with the provided redirect_uri so
+        # subsequent requests validate correctly.
+        logger.info("Auto-registering unknown client_id=%s with redirect_uri=%s", client_id, redirect_uri)
+        auto_record = {
+            "client_id": client_id,
+            "client_name": "Auto-registered OAuth client",
+            "redirect_uris": [redirect_uri] if redirect_uri else [],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "scope": DEFAULT_OAUTH_SCOPE,
+            "created_at": int(time.time()),
+        }
+        _save_registered_client(client_id, auto_record)
+        registered_client = auto_record
 
     if registered_client and redirect_uri not in registered_client.get("redirect_uris", []):
         return JSONResponse(
