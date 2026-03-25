@@ -8,7 +8,7 @@ import base64
 from pathlib import Path
 from shared import (
     CF_ZONE_ID, VPC_ID, VPC_CIDR,
-    UNBOUND_IP, RUST_WHOIS_IP, REPO_ROOT,
+    UNBOUND_IP, RUST_WHOIS_IP, RUST_WHOIS_HOSTNAME, REPO_ROOT,
     DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
 )
 
@@ -74,7 +74,7 @@ VALKEY_PORT={valkey_port}
 VALKEY_PASSWORD={vk_pass}
 VALKEY_USERNAME=default
 VALKEY_QUEUE_NAME=queue:jobs:{stack}
-WHOIS_HOSTNAME={RUST_WHOIS_IP}
+WHOIS_HOSTNAME={RUST_WHOIS_HOSTNAME}
 STRIPE_SECRET_KEY={stripe_key}
 STRIPE_WEBHOOK_SECRET={stripe_wh}
 AUTH0_DOMAIN={auth0_domain}
@@ -105,7 +105,7 @@ systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
 # --- VPC internal hostnames ---
 echo '{UNBOUND_IP} unbound.canyougrab.internal' >> /etc/hosts
-echo '{RUST_WHOIS_IP} rust-whois.canyougrab.internal' >> /etc/hosts
+# rust-whois uses CF DNS (rust-whois.canyougrab.it → VPC IP) — no hosts entry needed
 
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive

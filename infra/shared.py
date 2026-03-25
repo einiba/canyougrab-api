@@ -10,9 +10,10 @@ CF_ZONE_ID = "2f18d0a54e25e07c73667df397bd1c5f"
 VPC_ID = "159def95-d05a-4ab9-9618-b670ceada0bb"
 VPC_CIDR = "10.108.0.0/20"
 
-# VPC-internal service IPs
-UNBOUND_IP = "10.108.0.5"
-RUST_WHOIS_IP = "10.108.0.8"
+# VPC-internal services
+UNBOUND_IP = "10.108.0.5"  # static — unbound is not managed by Pulumi yet
+RUST_WHOIS_IP = "10.108.0.8"  # legacy — use RUST_WHOIS_HOSTNAME for new deploys
+RUST_WHOIS_HOSTNAME = "rust-whois.canyougrab.it"  # CF DNS → VPC private IP
 
 # Repo root (one level up from infra/)
 REPO_ROOT = Path(__file__).parent.parent

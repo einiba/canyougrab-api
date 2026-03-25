@@ -14,7 +14,7 @@ import pulumi_cloudflare as cf
 import pulumi_command as command
 from pathlib import Path
 from shared import (
-    VPC_ID, VPC_CIDR,
+    CF_ZONE_ID, VPC_ID, VPC_CIDR,
     UNBOUND_IP, RUST_WHOIS_IP,
     DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
 )
@@ -31,9 +31,10 @@ repo_owner = config.get("repo_owner") or "einiba"
 repo_name = config.get("repo_name") or "canyougrab-whois-engine"
 gh_token = config.get_secret("gh_token")  # needed for private repo releases
 
-# Service config
-bind_ip = RUST_WHOIS_IP  # VPC-internal only
+# Service config — bind to 0.0.0.0 so it works regardless of VPC IP assignment
+bind_ip = "0.0.0.0"
 bind_port = "3000"
+whois_hostname = "rust-whois.canyougrab.it"  # CF DNS → VPC private IP
 concurrent_queries = config.get("concurrent_queries") or "50"
 cache_ttl = config.get("cache_ttl") or "3600"
 cache_max = config.get("cache_max") or "10000"
@@ -225,20 +226,35 @@ whois_firewall = do.Firewall(
 )
 
 # ---------------------------------------------------------------------------
-# Health check
+# Cloudflare DNS — maps rust-whois.canyougrab.it to VPC private IP
+# API workers use this hostname instead of a hardcoded IP, so blue-green
+# deploys just update the DNS record and workers pick up the new IP.
+# ---------------------------------------------------------------------------
+cf_whois_dns = cf.DnsRecord(
+    "rust-whois-dns",
+    zone_id=CF_ZONE_ID,
+    name=whois_hostname,
+    type="A",
+    content=whois_droplet.ipv4_address_private,
+    proxied=False,
+    ttl=60,
+)
+
+# ---------------------------------------------------------------------------
+# Health check — SSH to public IP, curl the VPC-bound service
 # ---------------------------------------------------------------------------
 health_check = command.local.Command(
     "rust-whois-health-check",
-    create=whois_droplet.ipv4_address.apply(
-        lambda ip: (
-            f"for i in $(seq 1 60); do "
-            f"if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-            f"-i ~/.ssh/id_ed25519 root@{ip} "
-            f"'curl -sf http://{bind_ip}:{bind_port}/health' 2>/dev/null; then exit 0; fi; "
-            f"sleep 10; done; "
-            f"echo 'TIMEOUT: rust-whois health check failed after 10 minutes'; exit 1"
-        )
-    ),
+    create=pulumi.Output.all(
+        whois_droplet.ipv4_address, whois_droplet.ipv4_address_private,
+    ).apply(lambda ips: (
+        f"for i in $(seq 1 60); do "
+        f"if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+        f"-i ~/.ssh/id_ed25519 root@{ips[0]} "
+        f"'curl -sf http://127.0.0.1:{bind_port}/health' 2>/dev/null; then exit 0; fi; "
+        f"sleep 10; done; "
+        f"echo 'TIMEOUT: rust-whois health check failed after 10 minutes'; exit 1"
+    )),
     opts=pulumi.ResourceOptions(depends_on=[whois_droplet]),
 )
 
@@ -249,6 +265,7 @@ pulumi.export("droplet_id", whois_droplet.id)
 pulumi.export("droplet_name", whois_droplet.name)
 pulumi.export("public_ip", whois_droplet.ipv4_address)
 pulumi.export("private_ip", whois_droplet.ipv4_address_private)
-pulumi.export("service_url", f"http://{bind_ip}:{bind_port}")
+pulumi.export("dns_hostname", whois_hostname)
+pulumi.export("service_url", pulumi.Output.concat("http://", whois_droplet.ipv4_address_private, f":{bind_port}"))
 pulumi.export("release_version", release_version)
 pulumi.export("health_check", health_check.stdout)
