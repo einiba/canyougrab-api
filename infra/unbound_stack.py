@@ -104,7 +104,7 @@ remote-control:
 """
 
 
-def build_user_data() -> str:
+def build_user_data(tailscale_auth_key: str) -> str:
     return f"""#!/bin/bash
 set -e
 exec > /var/log/canyougrab-provision.log 2>&1
@@ -169,14 +169,25 @@ else
     echo "=== WARNING: Unbound DNS test failed ==="
 fi
 
+# --- Tailscale ---
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={droplet_name.replace('.canyougrab.it', '')}
+
 echo "=== unbound provision completed at $(date -u) ==="
 touch /opt/canyougrab/.provision-complete
 """
 
 
 # ---------------------------------------------------------------------------
+# Tailscale
+# ---------------------------------------------------------------------------
+from tailscale_key import server_key
+
+# ---------------------------------------------------------------------------
 # Droplet
 # ---------------------------------------------------------------------------
+user_data = server_key.key.apply(lambda key: build_user_data(tailscale_auth_key=key))
+
 unbound_droplet = do.Droplet(
     f"{stack}-droplet",
     name=droplet_name,
@@ -187,7 +198,7 @@ unbound_droplet = do.Droplet(
     ssh_keys=[ssh_key_fingerprint],
     monitoring=True,
     tags=["canyougrab-unbound"],
-    user_data=build_user_data(),
+    user_data=user_data,
 )
 
 # ---------------------------------------------------------------------------

@@ -6,3 +6,5 @@ config:
   canyougrab-infra:ssh_key_fingerprint: "54934856"
   canyougrab-infra:region: nyc3
   canyougrab-infra:droplet_size: s-1vcpu-2gb
+  tailscale:apiKey:
+    secure: AAABAOFAPxe6LsjHjh/aGHA9J8sCYG0+2hL1WuJhgHj5mUxs2X2x9aGjGNbwuVebcswm1NOItcY7OnlctuQ2mxqIgkEnU3kucReujtbuQH+uYyoy2nQo5Uzd8BNV
