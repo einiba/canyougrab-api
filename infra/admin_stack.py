@@ -405,8 +405,8 @@ cf_admin_dns = cf.DnsRecord(
     name="admin.canyougrab.it",
     type="A",
     content=admin_droplet.ipv4_address,
-    proxied=True,
-    ttl=1,
+    proxied=False,  # DNS-only — DO firewall blocks public 80/443, Tailscale-only access
+    ttl=300,
 )
 
 cf_dev_admin_dns = cf.DnsRecord(
@@ -415,7 +415,7 @@ cf_dev_admin_dns = cf.DnsRecord(
     name="dev-admin.canyougrab.it",
     type="A",
     content=admin_droplet.ipv4_address,
-    proxied=True,
+    proxied=False,  # DNS-only — Tailscale-only access
     ttl=1,
 )
 
@@ -427,18 +427,12 @@ admin_firewall = do.Firewall(
     name="canyougrab-admin-fw",
     droplet_ids=[admin_droplet.id],
     inbound_rules=[
-        # HTTPS (public — Grafana via CF proxy)
-        do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="443",
-            source_addresses=["0.0.0.0/0", "::/0"]),
-        do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="80",
-            source_addresses=["0.0.0.0/0", "::/0"]),
+        # NO public 80/443 — admin is Tailscale-only
         # Tailscale direct connections (UDP 41641)
         do.FirewallInboundRuleArgs(
             protocol="udp", port_range="41641",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # VPC internal (node exporter, Prometheus scraping)
+        # VPC internal (node exporter, Prometheus scraping between hosts)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="1-65535",
             source_addresses=[VPC_CIDR_OLD]),
