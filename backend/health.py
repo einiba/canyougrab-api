@@ -129,12 +129,21 @@ def _check_workers() -> dict:
         if active == 0:
             return {"status": "error", "latency_ms": latency_ms, "active": 0, "busy": 0, "error": "no workers registered"}
 
-        # Check heartbeat freshness
+        # Check heartbeat freshness (RQ heartbeats may be timezone-naive)
         stale_workers = 0
-        now = datetime.now(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        now_naive = datetime.utcnow()
         for w in workers:
             hb = w.last_heartbeat
-            if hb and (now - hb).total_seconds() > 120:
+            if hb is None:
+                stale_workers += 1
+                continue
+            # Handle both tz-aware and tz-naive heartbeats
+            if hb.tzinfo is None:
+                age = (now_naive - hb).total_seconds()
+            else:
+                age = (now_utc - hb).total_seconds()
+            if age > 120:
                 stale_workers += 1
 
         if stale_workers == active:
