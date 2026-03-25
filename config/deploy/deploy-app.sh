@@ -37,23 +37,28 @@ fi
 echo "==> Environment: $CANYOUGRAB_ENV"
 
 # --- Sync env files (split combined env into separate files for systemd) ---
-# If Pulumi wrote app.env (via cloud-init), use that as source of truth.
-# Otherwise fall back to the repo's static env file.
-if [ -f /opt/canyougrab/app.env ]; then
-    ENV_SRC="/opt/canyougrab/app.env"
-    echo "==> Using Pulumi-managed env (app.env)"
+# If Pulumi (cloud-init) already wrote the split env files, skip — don't overwrite
+# with potentially stale repo env files. Cloud-init is the source of truth.
+if [ -f /opt/canyougrab/app.env ] && grep -q 'DNS_RESOLVER_HOSTNAME' /opt/canyougrab/valkey.env 2>/dev/null; then
+    echo "==> Env files already managed by Pulumi (app.env), skipping"
 else
-    ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
-    if [ ! -f "$ENV_SRC" ]; then
-        echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
-        ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+    # Either standalone deploy or cloud-init split was incomplete — rebuild from best source
+    if [ -f /opt/canyougrab/app.env ]; then
+        ENV_SRC="/opt/canyougrab/app.env"
+        echo "==> Rebuilding env files from Pulumi-managed app.env"
+    else
+        ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
+        if [ ! -f "$ENV_SRC" ]; then
+            echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
+            ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+        fi
     fi
-fi
-if [ -f "$ENV_SRC" ]; then
-    grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
-    grep -E '^(VALKEY_|WHOIS_|DNS_RESOLVER)' "$ENV_SRC" > /opt/canyougrab/valkey.env
-    grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
-    echo "==> Env files synced from $ENV_SRC"
+    if [ -f "$ENV_SRC" ]; then
+        grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
+        grep -E '^(VALKEY_|WHOIS_|DNS_RESOLVER)' "$ENV_SRC" > /opt/canyougrab/valkey.env
+        grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
+        echo "==> Env files synced from $ENV_SRC"
+    fi
 fi
 
 # --- Install only the right nginx config for this environment ---
