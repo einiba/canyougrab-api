@@ -428,13 +428,13 @@ admin_firewall = do.Firewall(
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="80",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # SSH
+        # Tailscale direct connections (UDP 41641)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="22",
+            protocol="udp", port_range="41641",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # Node exporter (VPC only)
+        # VPC internal (node exporter, Prometheus scraping)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="9100",
+            protocol="tcp", port_range="1-65535",
             source_addresses=[VPC_CIDR_OLD]),
     ],
     outbound_rules=[

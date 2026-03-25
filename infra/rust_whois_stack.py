@@ -211,17 +211,13 @@ whois_firewall = do.Firewall(
     name=f"canyougrab-{stack}-fw",
     droplet_ids=[whois_droplet.id],
     inbound_rules=[
-        # WHOIS service (VPC only — API droplets connect here)
+        # Tailscale direct connections (UDP 41641)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="3000",
-            source_addresses=[vpc_cidr]),
-        # SSH
-        do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="22",
+            protocol="udp", port_range="41641",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # Node exporter (VPC only)
+        # VPC internal (WHOIS service, node exporter, inter-service)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="9100",
+            protocol="tcp", port_range="1-65535",
             source_addresses=[vpc_cidr]),
     ],
     outbound_rules=[

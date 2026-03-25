@@ -387,20 +387,20 @@ api_firewall = do.Firewall(
     name=f"canyougrab-{stack}-api-fw",
     droplet_ids=[api_droplet.id],
     inbound_rules=[
-        # HTTP/HTTPS (public)
+        # HTTP/HTTPS (public — API and portal traffic)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="80",
             source_addresses=["0.0.0.0/0", "::/0"]),
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="443",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # SSH
+        # Tailscale direct connections (UDP 41641)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="22",
+            protocol="udp", port_range="41641",
             source_addresses=["0.0.0.0/0", "::/0"]),
-        # Node exporter (VPC only)
+        # VPC internal (node exporter, inter-service)
         do.FirewallInboundRuleArgs(
-            protocol="tcp", port_range="9100",
+            protocol="tcp", port_range="1-65535",
             source_addresses=[vpc_cidr]),
     ],
     outbound_rules=[
