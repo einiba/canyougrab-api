@@ -157,9 +157,13 @@ unbound-control-setup 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable --now node_exporter unbound
 
+# --- Re-disable systemd-resolved stub (apt-get install unbound may re-enable it) ---
+systemctl restart systemd-resolved 2>/dev/null || true
+systemctl restart unbound
+
 # --- Verify ---
 sleep 2
-if dig @127.0.0.1 google.com NS +short | grep -q 'google'; then
+if dig @0.0.0.0 google.com NS +short | grep -q 'google'; then
     echo "=== Unbound DNS resolution verified ==="
 else
     echo "=== WARNING: Unbound DNS test failed ==="
