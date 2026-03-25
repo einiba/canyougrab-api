@@ -50,7 +50,7 @@ whois_timeout = config.get("whois_timeout") or "10"
 deploy_key_b64 = base64.b64encode(DEPLOY_KEY_PATH.read_bytes()).decode()
 
 
-def build_user_data(token: str) -> str:
+def build_user_data(token: str, tailscale_auth_key: str) -> str:
     """Cloud-init for rust-whois. Downloads pre-built binary from GitHub Release."""
 
     # Build the download command — use gh token for private repos
@@ -75,12 +75,15 @@ set -e
 exec > /var/log/canyougrab-provision.log 2>&1
 echo "=== rust-whois provision started at $(date -u) ==="
 
+# --- Tailscale (FIRST — enables SSH debug access if provisioning fails) ---
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={droplet_name}
+echo "=== Tailscale connected ==="
+
 # --- SSH hardening ---
 sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-
-# No VPC hosts entries needed — rust-whois doesn't depend on other VPC services
 
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive
@@ -178,9 +181,12 @@ touch /opt/canyougrab/.provision-complete
 # ---------------------------------------------------------------------------
 # Droplet
 # ---------------------------------------------------------------------------
+from tailscale_key import server_key
+
 user_data = pulumi.Output.all(
     gh_token or pulumi.Output.from_input(""),
-).apply(lambda s: build_user_data(s[0]))
+    server_key.key,
+).apply(lambda s: build_user_data(token=s[0], tailscale_auth_key=s[1]))
 
 whois_droplet = do.Droplet(
     f"{stack}-droplet",

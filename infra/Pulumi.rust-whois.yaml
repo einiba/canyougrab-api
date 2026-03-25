@@ -11,3 +11,5 @@ config:
   canyougrab-infra:release_version: v0.2.2
   cloudflare:apiToken:
     secure: AAABAAS4QHxTkuHXe0f+OD3TvH3T86Yfwa79KNbBtxFyfA8m+kG1wFeNQNyG/5Y8KpJc13XJWds39NShkTfAFuuyjVyo+TdUoou/90mrFm1eX9Lbhg==
+  tailscale:apiKey:
+    secure: AAABAPC3ms8f3Hzm7To58WXUTIiU97mZ9xk4UQKH5uhUe4aJZbYufws9kwUgCtVEb3dgc1SRcKBVHFo4sIe4HeNSVYHyAet/jMvyZqX62Q9VwfjdyvWwoZ4Hps3M

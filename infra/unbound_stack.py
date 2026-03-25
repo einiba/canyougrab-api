@@ -110,6 +110,11 @@ set -e
 exec > /var/log/canyougrab-provision.log 2>&1
 echo "=== unbound provision started at $(date -u) ==="
 
+# --- Tailscale (FIRST — enables SSH debug access if provisioning fails) ---
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={droplet_name.replace('.canyougrab.it', '')}
+echo "=== Tailscale connected ==="
+
 # --- SSH hardening ---
 sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
@@ -168,10 +173,6 @@ if dig @0.0.0.0 google.com NS +short | grep -q 'google'; then
 else
     echo "=== WARNING: Unbound DNS test failed ==="
 fi
-
-# --- Tailscale ---
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={droplet_name.replace('.canyougrab.it', '')}
 
 echo "=== unbound provision completed at $(date -u) ==="
 touch /opt/canyougrab/.provision-complete
