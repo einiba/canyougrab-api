@@ -82,8 +82,10 @@ echo "=== admin provision started at $(date -u) ==="
 
 # --- Tailscale (FIRST — enables SSH debug access if provisioning fails) ---
 curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --auth-key={tailscale_auth_key} --ssh --hostname=admin
-echo "=== Tailscale connected ==="
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/99-tailscale.conf
+sysctl -p /etc/sysctl.d/99-tailscale.conf
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname=admin --advertise-routes=10.108.0.0/20
+echo "=== Tailscale connected (advertising VPC routes) ==="
 
 # --- SSH hardening ---
 sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
