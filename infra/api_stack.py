@@ -96,17 +96,18 @@ BATCH_CONCURRENCY={batch_concurrency}"""
 def build_user_data(
     env_file_content: str,
     cf_token: str,
+    tailscale_auth_key: str,
 ) -> str:
-    """Cloud-init script that fully bootstraps a droplet.
-
-    SSL strategy:
-      - API: Let's Encrypt via certbot + cloudflare DNS-01 (works before DNS switch)
-      - Portal: Cloudflare origin cert (portal is CF-proxied)
-    """
+    """Cloud-init script that fully bootstraps a droplet."""
     return f"""#!/bin/bash
 set -e
 exec > /var/log/canyougrab-provision.log 2>&1
 echo "=== canyougrab provision started at $(date -u) ==="
+
+# --- Tailscale (FIRST — enables SSH debug access if provisioning fails) ---
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={stack}-api
+echo "=== Tailscale connected ==="
 
 # --- SSH hardening ---
 sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
@@ -313,12 +314,15 @@ touch /opt/canyougrab/.provision-complete
 # ---------------------------------------------------------------------------
 # API Droplet
 # ---------------------------------------------------------------------------
+from tailscale_key import server_key
+
 user_data = pulumi.Output.all(
     postgres_password, valkey_password, stripe_secret_key, stripe_webhook_secret,
-    cf_api_token,
+    cf_api_token, server_key.key,
 ).apply(lambda s: build_user_data(
     env_file_content=build_env_file(s[0], s[1], s[2], s[3]),
     cf_token=s[4],
+    tailscale_auth_key=s[5],
 ))
 
 api_droplet = do.Droplet(

@@ -19,9 +19,8 @@ import pulumi_command as command
 import base64
 from pathlib import Path
 from shared import (
-    CF_ZONE_ID, VPC_ID, VPC_CIDR,
-    UNBOUND_IP, RUST_WHOIS_IP, REPO_ROOT,
-    DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
+    CF_ZONE_ID, VPC_ID_OLD, VPC_CIDR_OLD,
+    REPO_ROOT, DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
 )
 
 config = pulumi.Config()
@@ -61,6 +60,7 @@ def build_admin_user_data(
     valkey_pw: str,
     do_token: str,
     slack_url: str,
+    tailscale_auth_key: str,
 ) -> str:
     """Cloud-init script for the admin/monitoring server."""
 
@@ -80,14 +80,17 @@ set -e
 exec > /var/log/canyougrab-provision.log 2>&1
 echo "=== admin provision started at $(date -u) ==="
 
+# --- Tailscale (FIRST — enables SSH debug access if provisioning fails) ---
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname=admin
+echo "=== Tailscale connected ==="
+
 # --- SSH hardening ---
 sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-# --- VPC internal hostnames ---
-echo '{UNBOUND_IP} unbound.canyougrab.internal' >> /etc/hosts
-echo '{RUST_WHOIS_IP} rust-whois.canyougrab.internal' >> /etc/hosts
+# No VPC hosts entries needed — admin uses CF DNS for service discovery
 
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive
@@ -359,16 +362,18 @@ systemctl daemon-reload
 systemctl enable --now node_exporter prometheus alertmanager redis-exporter rq-metrics grafana-server nginx
 
 echo "=== admin provision completed at $(date -u) ==="
-touch /opt/canyougrab/.provision-complete
+mkdir -p /opt/canyougrab && touch /opt/canyougrab/.provision-complete
 """
 
 
 # ---------------------------------------------------------------------------
 # Admin Droplet
 # ---------------------------------------------------------------------------
+from tailscale_key import server_key
+
 user_data = pulumi.Output.all(
-    valkey_password, do_api_token, slack_webhook_url,
-).apply(lambda s: build_admin_user_data(s[0], s[1], s[2]))
+    valkey_password, do_api_token, slack_webhook_url, server_key.key,
+).apply(lambda s: build_admin_user_data(s[0], s[1], s[2], tailscale_auth_key=s[3]))
 
 admin_droplet = do.Droplet(
     "admin",
@@ -376,7 +381,7 @@ admin_droplet = do.Droplet(
     image="ubuntu-24-04-x64",
     region=region,
     size=droplet_size,
-    vpc_uuid=VPC_ID,
+    vpc_uuid=VPC_ID_OLD,
     ssh_keys=[ssh_key_fingerprint],
     monitoring=True,
     tags=["canyougrab-admin"],
@@ -428,7 +433,7 @@ admin_firewall = do.Firewall(
         # Node exporter (VPC only)
         do.FirewallInboundRuleArgs(
             protocol="tcp", port_range="9100",
-            source_addresses=[VPC_CIDR]),
+            source_addresses=[VPC_CIDR_OLD]),
     ],
     outbound_rules=[
         do.FirewallOutboundRuleArgs(
@@ -451,8 +456,8 @@ health_check = command.local.Command(
     create=admin_droplet.ipv4_address.apply(
         lambda ip: (
             f"for i in $(seq 1 90); do "
-            f"if curl -sf --max-time 5 --resolve admin.canyougrab.it:443:{ip} "
-            f"https://admin.canyougrab.it/api/health 2>/dev/null; then exit 0; fi; "
+            f"if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@admin "
+            f"'curl -sf http://127.0.0.1:3000/api/health' 2>/dev/null; then exit 0; fi; "
             f"sleep 10; done; "
             f"echo 'TIMEOUT: admin health check failed after 15 minutes'; exit 1"
         )

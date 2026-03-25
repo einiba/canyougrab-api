@@ -8,3 +8,5 @@ config:
   canyougrab-infra:droplet_size: s-2vcpu-2gb
   canyougrab-infra:valkey_password:
     secure: AAABAEa9HP29PMcqzzzubVexGbjCN87Llh8gwoN15BDFY1uXkkJH8FMx923Tycf91ouzs7NA9BQ=
+  tailscale:apiKey:
+    secure: AAABAK1S8LTp8bBkKexY5/kdhoinxEsqKDQz6MvnZxqgRwSBm24bA+QmFjwDp35qqYz8ifgZpxmzomZUVN8M2yq8ucr1DHIM9gvQ+J2fTOFA5x592HC94KOo+0xB

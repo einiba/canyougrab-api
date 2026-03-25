@@ -18,3 +18,5 @@ config:
     secure: AAABAEVndc1j8w24uAujMTfP/y6FjnHYYU7BL8Atog6xhVaR4bdhw0ILD4VE9IPrT7fdVgaT924+Mh5g29/Iys8VG40dmtOSTsM8LdJHC2TgTiygGw==
   canyougrab-infra:postgres_host: db-postgresql-canyougrab-do-user-34997254-0.k.db.ondigitalocean.com
   canyougrab-infra:valkey_host: db-valkey-canyougrab-do-user-34997254-0.k.db.ondigitalocean.com
+  tailscale:apiKey:
+    secure: AAABAIgvdNzrS/fBoiREuzoa68pMC0thciP+R2LaC2TjQp5MmI5sXXiVP8PqfnEseNUlag2fbW6seUVf34oMdtAoZ3O0BTT6x4vOBrBzhitpaPnXY9+vxlZ/zlu2
