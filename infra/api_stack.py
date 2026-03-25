@@ -8,7 +8,7 @@ import base64
 from pathlib import Path
 from shared import (
     CF_ZONE_ID, VPC_ID, VPC_CIDR,
-    UNBOUND_IP, RUST_WHOIS_IP, RUST_WHOIS_HOSTNAME, REPO_ROOT,
+    UNBOUND_IP, UNBOUND_HOSTNAME, RUST_WHOIS_IP, RUST_WHOIS_HOSTNAME, REPO_ROOT,
     DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
 )
 
@@ -75,6 +75,7 @@ VALKEY_PASSWORD={vk_pass}
 VALKEY_USERNAME=default
 VALKEY_QUEUE_NAME=queue:jobs:{stack}
 WHOIS_HOSTNAME={RUST_WHOIS_HOSTNAME}
+DNS_RESOLVER_HOSTNAME={UNBOUND_HOSTNAME}
 STRIPE_SECRET_KEY={stripe_key}
 STRIPE_WEBHOOK_SECRET={stripe_wh}
 AUTH0_DOMAIN={auth0_domain}
@@ -103,9 +104,8 @@ sed -i 's/^#\\?MaxStartups.*/MaxStartups 50:30:200/' /etc/ssh/sshd_config
 grep -q '^MaxStartups' /etc/ssh/sshd_config || echo 'MaxStartups 50:30:200' >> /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
-# --- VPC internal hostnames ---
-echo '{UNBOUND_IP} unbound.canyougrab.internal' >> /etc/hosts
-# rust-whois uses CF DNS (rust-whois.canyougrab.it → VPC IP) — no hosts entry needed
+# --- VPC services use CF DNS for service discovery (no /etc/hosts needed) ---
+# unbound.canyougrab.it and rust-whois.canyougrab.it resolve to VPC IPs via CF DNS
 
 # --- System packages ---
 export DEBIAN_FRONTEND=noninteractive
