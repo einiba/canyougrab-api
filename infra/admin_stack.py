@@ -20,7 +20,7 @@ import base64
 from pathlib import Path
 from shared import (
     CF_ZONE_ID, VPC_ID_OLD, VPC_CIDR_OLD,
-    REPO_ROOT, DEPLOY_KEY_PATH, SSL_CERT_PATH, SSL_KEY_PATH,
+    REPO_ROOT, DEPLOY_KEY_PATH,
 )
 
 config = pulumi.Config()
@@ -34,11 +34,11 @@ ssh_key_fingerprint = config.require("ssh_key_fingerprint")
 valkey_password = config.require_secret("valkey_password")
 do_api_token = pulumi.Config("digitalocean").require_secret("token")
 slack_webhook_url = config.get_secret("slack_webhook_url") or pulumi.Output.from_input("")
+cf_api_token = pulumi.Config("cloudflare").require_secret("apiToken")
 
 # Read local files
 deploy_key_b64 = base64.b64encode(DEPLOY_KEY_PATH.read_bytes()).decode()
-ssl_cert = SSL_CERT_PATH.read_text() if SSL_CERT_PATH.exists() else ""
-ssl_key = SSL_KEY_PATH.read_text() if SSL_KEY_PATH.exists() else ""
+# SSL certs now via Let's Encrypt (certbot in cloud-init), no longer need CF origin certs
 
 # Read config files from repo
 prometheus_yml = (REPO_ROOT / "config" / "prometheus" / "prometheus.yml").read_text()
@@ -61,6 +61,7 @@ def build_admin_user_data(
     do_token: str,
     slack_url: str,
     tailscale_auth_key: str,
+    cf_token: str,
 ) -> str:
     """Cloud-init script for the admin/monitoring server."""
 
@@ -302,14 +303,21 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# --- SSL certs (Cloudflare origin cert — admin is CF-proxied) ---
-cat > /etc/ssl/cloudflare-origin-cert.pem <<'SSLCERT'
-{ssl_cert}
-SSLCERT
-cat > /etc/ssl/cloudflare-origin-key.pem <<'SSLKEY'
-{ssl_key}
-SSLKEY
-chmod 600 /etc/ssl/cloudflare-origin-key.pem
+# --- SSL via Let's Encrypt (DNS-01 challenge via Cloudflare) ---
+apt-get install -y -qq certbot python3-certbot-dns-cloudflare
+mkdir -p /etc/letsencrypt
+cat > /etc/letsencrypt/cloudflare.ini <<CFINI
+dns_cloudflare_api_token = {cf_token}
+CFINI
+chmod 600 /etc/letsencrypt/cloudflare.ini
+
+certbot certonly --non-interactive --agree-tos \
+  --email admin@canyougrab.it \
+  --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+  --dns-cloudflare-propagation-seconds 60 \
+  --cert-name admin.canyougrab.it \
+  -d admin.canyougrab.it -d dev-admin.canyougrab.it \
+  --keep-until-expiring 2>&1 || echo "certbot failed, continuing..."
 
 # --- Nginx ---
 rm -f /etc/nginx/sites-enabled/default
@@ -322,8 +330,8 @@ server {{
 server {{
     listen 443 ssl;
     server_name admin.canyougrab.it dev-admin.canyougrab.it;
-    ssl_certificate /etc/ssl/cloudflare-origin-cert.pem;
-    ssl_certificate_key /etc/ssl/cloudflare-origin-key.pem;
+    ssl_certificate /etc/letsencrypt/live/admin.canyougrab.it/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.canyougrab.it/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -377,8 +385,8 @@ from tailscale_cleanup import pre_deploy_cleanup, post_deploy_approve_routes
 ts_cleanup = pre_deploy_cleanup("admin")
 
 user_data = pulumi.Output.all(
-    valkey_password, do_api_token, slack_webhook_url, server_key.key,
-).apply(lambda s: build_admin_user_data(s[0], s[1], s[2], tailscale_auth_key=s[3]))
+    valkey_password, do_api_token, slack_webhook_url, server_key.key, cf_api_token,
+).apply(lambda s: build_admin_user_data(s[0], s[1], s[2], tailscale_auth_key=s[3], cf_token=s[4]))
 
 admin_droplet = do.Droplet(
     "admin",
@@ -397,15 +405,30 @@ admin_droplet = do.Droplet(
 ts_routes = post_deploy_approve_routes("admin", depends_on=[admin_droplet])
 
 # ---------------------------------------------------------------------------
-# Cloudflare DNS (both CF-proxied)
+# Get Tailscale IP (assigned during cloud-init, read after boot)
+# ---------------------------------------------------------------------------
+ts_ip_cmd = command.local.Command(
+    "admin-ts-ip",
+    create=pulumi.Output.concat(
+        "for i in $(seq 1 90); do ",
+        "IP=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@admin ",
+        "'tailscale ip -4' 2>/dev/null); ",
+        "if [ -n \"$IP\" ]; then echo -n $IP; exit 0; fi; ",
+        "sleep 10; done; exit 1",
+    ),
+    opts=pulumi.ResourceOptions(depends_on=[admin_droplet]),
+)
+
+# ---------------------------------------------------------------------------
+# Cloudflare DNS — points to Tailscale IP (only reachable from tailnet)
 # ---------------------------------------------------------------------------
 cf_admin_dns = cf.DnsRecord(
     "admin-dns",
     zone_id=CF_ZONE_ID,
     name="admin.canyougrab.it",
     type="A",
-    content=admin_droplet.ipv4_address,
-    proxied=False,  # DNS-only — DO firewall blocks public 80/443, Tailscale-only access
+    content=ts_ip_cmd.stdout,  # Tailscale IP — only routable on tailnet
+    proxied=False,
     ttl=300,
 )
 
@@ -414,9 +437,9 @@ cf_dev_admin_dns = cf.DnsRecord(
     zone_id=CF_ZONE_ID,
     name="dev-admin.canyougrab.it",
     type="A",
-    content=admin_droplet.ipv4_address,
-    proxied=False,  # DNS-only — Tailscale-only access
-    ttl=1,
+    content=ts_ip_cmd.stdout,
+    proxied=False,
+    ttl=300,
 )
 
 # ---------------------------------------------------------------------------

@@ -201,7 +201,7 @@ fi
 if certbot certonly \\
     --dns-cloudflare \\
     --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \\
-    --dns-cloudflare-propagation-seconds 30 \\
+    --dns-cloudflare-propagation-seconds 60 \\
     -d {api_hostname} \\
     --non-interactive \\
     --agree-tos \\
