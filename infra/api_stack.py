@@ -164,7 +164,7 @@ cat > /opt/canyougrab/app.env <<'ENVFILE'
 {env_file_content}
 ENVFILE
 grep '^POSTGRES_' /opt/canyougrab/app.env > /opt/canyougrab/database.env
-grep -E '^(VALKEY_|WHOIS_)' /opt/canyougrab/app.env > /opt/canyougrab/valkey.env
+grep -E '^(VALKEY_|WHOIS_|DNS_RESOLVER)' /opt/canyougrab/app.env > /opt/canyougrab/valkey.env
 grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' /opt/canyougrab/app.env > /opt/canyougrab/stripe.env
 
 # --- SSL: Cloudflare origin cert (for portal — CF-proxied) ---

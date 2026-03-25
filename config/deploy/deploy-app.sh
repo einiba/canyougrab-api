@@ -44,7 +44,7 @@ if [ ! -f "$ENV_SRC" ]; then
 fi
 if [ -f "$ENV_SRC" ]; then
     grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
-    grep -E '^(VALKEY_|WHOIS_)' "$ENV_SRC" > /opt/canyougrab/valkey.env
+    grep -E '^(VALKEY_|WHOIS_|DNS_RESOLVER)' "$ENV_SRC" > /opt/canyougrab/valkey.env
     grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
     echo "==> Env files synced from $ENV_SRC"
 fi
