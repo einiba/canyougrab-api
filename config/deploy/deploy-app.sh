@@ -37,10 +37,17 @@ fi
 echo "==> Environment: $CANYOUGRAB_ENV"
 
 # --- Sync env files (split combined env into separate files for systemd) ---
-ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
-if [ ! -f "$ENV_SRC" ]; then
-    echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
-    ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+# If Pulumi wrote app.env (via cloud-init), use that as source of truth.
+# Otherwise fall back to the repo's static env file.
+if [ -f /opt/canyougrab/app.env ]; then
+    ENV_SRC="/opt/canyougrab/app.env"
+    echo "==> Using Pulumi-managed env (app.env)"
+else
+    ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
+    if [ ! -f "$ENV_SRC" ]; then
+        echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
+        ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+    fi
 fi
 if [ -f "$ENV_SRC" ]; then
     grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
