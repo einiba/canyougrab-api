@@ -1,0 +1,20 @@
+[Unit]
+Description=CanYouGrab API (FastAPI/Uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/canyougrab/api
+EnvironmentFile=/opt/canyougrab/database.env
+EnvironmentFile=/opt/canyougrab/valkey.env
+EnvironmentFile=/opt/canyougrab/stripe.env
+ExecStart=/opt/canyougrab/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --workers 3
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=canyougrab-api
+
+[Install]
+WantedBy=multi-user.target
