@@ -175,7 +175,11 @@ dns_cloudflare_api_token = {cf_token}
 CFINI
 chmod 600 /etc/letsencrypt/cloudflare.ini
 
-certbot certonly \\
+# Force fresh ACME account registration (each droplet is ephemeral)
+rm -rf /etc/letsencrypt/accounts
+
+# Certbot may fail (rate limits, DNS propagation) — don't abort the whole bootstrap
+if certbot certonly \\
     --dns-cloudflare \\
     --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \\
     --dns-cloudflare-propagation-seconds 30 \\
@@ -183,12 +187,20 @@ certbot certonly \\
     --non-interactive \\
     --agree-tos \\
     --email eric.cocozza@canyougrab.it \\
-    --cert-name api
+    --cert-name api \\
+    --force-renewal; then
+    echo "=== Let's Encrypt cert obtained ==="
+    LE_CERT_OK=true
+else
+    echo "=== WARNING: certbot failed, falling back to Cloudflare origin cert ==="
+    LE_CERT_OK=false
+fi
 
-# Set up auto-renewal timer (certbot installs one by default on Ubuntu)
+# Set up auto-renewal timer
 systemctl enable certbot.timer 2>/dev/null || true
 
-# --- Nginx: API (Let's Encrypt cert, DNS-only, no CF proxy) ---
+# --- Nginx: API ---
+# Use LE cert if available, fall back to Cloudflare origin cert
 rm -f /etc/nginx/sites-enabled/default
 cat > /etc/nginx/sites-enabled/api.conf <<'NGINXAPI'
 server {{
@@ -201,8 +213,8 @@ server {{
     listen 443 ssl;
     server_name {api_hostname};
 
-    ssl_certificate /etc/letsencrypt/live/api/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api/privkey.pem;
+    ssl_certificate __SSL_CERT__;
+    ssl_certificate_key __SSL_KEY__;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -238,6 +250,15 @@ server {{
     }}
 }}
 NGINXAPI
+
+# Patch SSL cert paths based on whether LE succeeded
+if [ "$LE_CERT_OK" = true ]; then
+    sed -i 's|__SSL_CERT__|/etc/letsencrypt/live/api/fullchain.pem|' /etc/nginx/sites-enabled/api.conf
+    sed -i 's|__SSL_KEY__|/etc/letsencrypt/live/api/privkey.pem|' /etc/nginx/sites-enabled/api.conf
+else
+    sed -i 's|__SSL_CERT__|/etc/ssl/cloudflare-origin-cert.pem|' /etc/nginx/sites-enabled/api.conf
+    sed -i 's|__SSL_KEY__|/etc/ssl/cloudflare-origin-key.pem|' /etc/nginx/sites-enabled/api.conf
+fi
 
 # --- Nginx: Portal (Cloudflare origin cert, CF-proxied) ---
 cat > /etc/nginx/sites-enabled/portal.conf <<'NGINXPORTAL'
