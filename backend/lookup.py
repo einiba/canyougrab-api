@@ -133,7 +133,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
             'checked_at': now,
             'cache_age_seconds': 0,
             'registration': None,
-            'error': f'whois_verification_unavailable_for_.{tld}',
+            'error': 'whois_disabled_for_this_tld',
         }
         if _profiling_enabled:
             logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 whois_outcome=tld_disabled total_ms=%.1f',
