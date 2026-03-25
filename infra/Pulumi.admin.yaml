@@ -7,4 +7,4 @@ config:
   canyougrab-infra:region: nyc3
   canyougrab-infra:droplet_size: s-2vcpu-2gb
   canyougrab-infra:valkey_password:
-    secure: AAABAIUJWdWHGzdK++gF5GlMbtHL5dYb/pJC2mEWvAwAnlhxEY+9EvJgk5dFrajvPTHLzcefi4M=
+    secure: AAABAEa9HP29PMcqzzzubVexGbjCN87Llh8gwoN15BDFY1uXkkJH8FMx923Tycf91ouzs7NA9BQ=

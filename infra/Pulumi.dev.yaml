@@ -6,12 +6,14 @@ config:
   canyougrab-infra:droplet_size: s-1vcpu-1gb
   canyougrab-infra:git_ref: dev
   canyougrab-infra:postgres_password:
-    secure: AAABAHvglMgkc2Yvj/MERpDifLbwbOgGEogIDTCmVB2qojnhG6g6GxPqaE4sZP+g+/EmH42x7Mw=
+    secure: AAABANPgWwOdGXb8aOf0B3fjv3Fjm+2a9eO811cCAagXd6Qu/cpR3g15+ukSyU7SAy3WeFIGC1U=
   canyougrab-infra:valkey_password:
-    secure: AAABAFYcUmbeVIQlgTFI/4EkUAWvyhOl95a+qoR/7WwfMFyqaR9ZwnqQWCQJBECZb3w7ZBTQkv4=
+    secure: AAABACWGRJV0yoLlCq68Wl1zkTu9ca+Vii7fY2HJvQ9iVbmHLLkVT7YgVEKt/u8L6ONhMmDQh0M=
   canyougrab-infra:stripe_secret_key:
     secure: AAABAK/C4bbRUd/mfxVMytG6KdgnXHgzk4PHg8GkBhtq4eyHvvTn6GwrhxrGVhob+Xh1Mlt1f9OYvNVMBnw3BH+n3Mebom1IvzAaaqfBdssyK4evQ0qjnrhnNk2gc0AY2aJu0Zo9rohHulScsM7rWWs62DhJkEfe/VMhTImjQwks/77OAGSmjmvPRw==
   canyougrab-infra:stripe_webhook_secret:
     secure: AAABAGSC5c4b8MeWlpClSMACYWwVj5pGjMdFqFWR0ujDl7hzdRo1rtjwKc6Qu4bd5qZvhWJFksMiXlyeUQ1jKLY4NSwLDQ==
   cloudflare:apiToken:
     secure: AAABAKk9IFM2+pAXBX88EJv6kqiBQXLqnIyZ89Rv1/OK8K8lXF4jqKKyt7HiebpEsBMPcJys8/kUdPxwuSQYUo/8inW/SMj3mn34vosSevcTULfZCA==
+  canyougrab-infra:postgres_host: db-postgresql-canyougrab-do-user-34997254-0.k.db.ondigitalocean.com
+  canyougrab-infra:valkey_host: db-valkey-canyougrab-do-user-34997254-0.k.db.ondigitalocean.com
