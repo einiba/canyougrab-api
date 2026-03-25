@@ -446,20 +446,18 @@ admin_firewall = do.Firewall(
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
-health_check = command.remote.Command(
+health_check = command.local.Command(
     "admin-health-check",
-    connection=command.remote.ConnectionArgs(
-        host=admin_droplet.ipv4_address,
-        user="root",
-        private_key=Path.home().joinpath(".ssh/id_ed25519").read_text(),
+    create=admin_droplet.ipv4_address.apply(
+        lambda ip: (
+            f"for i in $(seq 1 90); do "
+            f"if curl -sf --max-time 5 --resolve admin.canyougrab.it:443:{ip} "
+            f"https://admin.canyougrab.it/api/health 2>/dev/null; then exit 0; fi; "
+            f"sleep 10; done; "
+            f"echo 'TIMEOUT: admin health check failed after 15 minutes'; exit 1"
+        )
     ),
-    create=" ".join([
-        "for i in $(seq 1 120); do",
-        "test -f /opt/canyougrab/.provision-complete && break;",
-        "sleep 10; done;",
-        "curl -sf http://127.0.0.1:3000/api/health && echo OK",
-    ]),
-    opts=pulumi.ResourceOptions(depends_on=[admin_droplet]),
+    opts=pulumi.ResourceOptions(depends_on=[admin_droplet, cf_admin_dns]),
 )
 
 # ---------------------------------------------------------------------------

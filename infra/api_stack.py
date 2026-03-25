@@ -302,6 +302,9 @@ api_droplet = do.Droplet(
     monitoring=True,
     tags=[f"canyougrab-api-{stack}"],
     user_data=user_data,
+    # True blue-green: create new droplet BEFORE destroying old one.
+    # DNS switches after the new droplet is up, then old one is deleted.
+    opts=pulumi.ResourceOptions(delete_before_replace=False),
 )
 
 # ---------------------------------------------------------------------------
@@ -367,22 +370,20 @@ api_firewall = do.Firewall(
 )
 
 # ---------------------------------------------------------------------------
-# Health check (waits for cloud-init, then verifies API)
+# Health check (polls public HTTPS endpoint — no SSH needed)
 # ---------------------------------------------------------------------------
-health_check = command.remote.Command(
+health_check = command.local.Command(
     f"{stack}-api-health-check",
-    connection=command.remote.ConnectionArgs(
-        host=api_droplet.ipv4_address,
-        user="root",
-        private_key=Path.home().joinpath(".ssh/id_ed25519").read_text(),
+    create=api_droplet.ipv4_address.apply(
+        lambda ip: (
+            f"for i in $(seq 1 60); do "
+            f"if curl -sf --max-time 5 --resolve {api_hostname}:443:{ip} "
+            f"https://{api_hostname}/health 2>/dev/null; then exit 0; fi; "
+            f"sleep 5; done; "
+            f"echo 'TIMEOUT: health check failed after 5 minutes'; exit 1"
+        )
     ),
-    create=" ".join([
-        "for i in $(seq 1 90); do",
-        "test -f /opt/canyougrab/.provision-complete && break;",
-        "sleep 10; done;",
-        "curl -sf http://127.0.0.1:8000/health",
-    ]),
-    opts=pulumi.ResourceOptions(depends_on=[api_droplet]),
+    opts=pulumi.ResourceOptions(depends_on=[api_droplet, cf_api_dns]),
 )
 
 # ---------------------------------------------------------------------------

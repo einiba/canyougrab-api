@@ -227,19 +227,18 @@ whois_firewall = do.Firewall(
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
-health_check = command.remote.Command(
+health_check = command.local.Command(
     "rust-whois-health-check",
-    connection=command.remote.ConnectionArgs(
-        host=whois_droplet.ipv4_address,
-        user="root",
-        private_key=Path.home().joinpath(".ssh/id_ed25519").read_text(),
+    create=whois_droplet.ipv4_address.apply(
+        lambda ip: (
+            f"for i in $(seq 1 60); do "
+            f"if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+            f"-i ~/.ssh/id_ed25519 root@{ip} "
+            f"'curl -sf http://{bind_ip}:{bind_port}/health' 2>/dev/null; then exit 0; fi; "
+            f"sleep 10; done; "
+            f"echo 'TIMEOUT: rust-whois health check failed after 10 minutes'; exit 1"
+        )
     ),
-    create=" ".join([
-        "for i in $(seq 1 60); do",
-        "test -f /opt/canyougrab/.provision-complete && break;",
-        "sleep 10; done;",
-        f"curl -sf http://{bind_ip}:{bind_port}/health",
-    ]),
     opts=pulumi.ResourceOptions(depends_on=[whois_droplet]),
 )
 

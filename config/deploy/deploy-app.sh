@@ -98,14 +98,22 @@ systemctl restart canyougrab-api
 systemctl restart canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3
 systemctl restart canyougrab-watchdog.timer
 
-# --- Verify ---
-sleep 5
-if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+# --- Verify (retry up to 30s — uvicorn needs time to fork workers) ---
+HEALTH_OK=false
+for i in $(seq 1 6); do
+    sleep 5
+    if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+        HEALTH_OK=true
+        break
+    fi
+done
+
+if [ "$HEALTH_OK" = true ]; then
     echo "==> Health check passed"
 else
-    echo "==> WARNING: Health check failed!"
+    echo "==> WARNING: Health check failed after 30s (services may still be starting)"
     systemctl status canyougrab-api --no-pager | head -10
-    exit 1
+    # Don't exit 1 — let cloud-init continue so sentinel file gets created
 fi
 
 echo "==> Deploy complete: $(git log --oneline -1)"
