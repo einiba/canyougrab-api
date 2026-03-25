@@ -110,7 +110,7 @@ curl -fsSL https://tailscale.com/install.sh | sh
 # Enable IP forwarding for subnet routing
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/99-tailscale.conf
 sysctl -p /etc/sysctl.d/99-tailscale.conf
-tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={stack}-api --advertise-routes=10.120.0.0/20
+tailscale up --auth-key={tailscale_auth_key} --ssh --hostname={stack}-api --advertise-routes={vpc_cidr}
 echo "=== Tailscale connected (advertising VPC routes) ==="
 
 # --- SSH hardening ---
