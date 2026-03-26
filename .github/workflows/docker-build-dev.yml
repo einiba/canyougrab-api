@@ -12,7 +12,7 @@ on:
       - '.github/workflows/docker-build-dev.yml'
 
 env:
-  REGISTRY: registry.digitalocean.com/canyougrab
+  REGISTRY: registry.digitalocean.com/canyougrabit
 
 jobs:
   build-api:
