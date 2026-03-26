@@ -10,10 +10,9 @@ WORKDIR /app
 
 # Install Python deps (cached layer)
 COPY backend/requirements.txt /app/requirements.txt
-COPY mcp-server/pyproject.toml /app/mcp-server/pyproject.toml
-COPY mcp-server/src /app/mcp-server/src
+COPY mcp-server/ /app/mcp-server/
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir /app/mcp-server[remote]
+    pip install --no-cache-dir "/app/mcp-server[remote]"
 
 # Copy application code
 COPY backend/ /app/
