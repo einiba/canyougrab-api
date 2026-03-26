@@ -421,7 +421,7 @@ def get_usage_detailed(user: JWTUser = Depends(jwt_auth)):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, key_prefix, description, plan, created_at
+                SELECT id, key_prefix, description, plan, created_at, disabled_at
                 FROM api_keys
                 WHERE user_sub = %s AND revoked_at IS NULL
                 ORDER BY created_at

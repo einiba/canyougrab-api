@@ -11,7 +11,7 @@ interface ApiKey {
   description: string;
   plan: string;
   created_at: string | null;
-  revoked_at: string | null;
+  disabled_at: string | null;
   active: boolean;
 }
 
@@ -33,7 +33,7 @@ export function ApiKeysPage() {
 
   // Confirm dialogs
   const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDisable, setConfirmDisable] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchKeys = useCallback(async () => {
@@ -113,18 +113,18 @@ export function ApiKeysPage() {
     [signRequest, fetchKeys],
   );
 
-  const handleDelete = useCallback(
-    async (keyId: string) => {
+  const handleToggleDisable = useCallback(
+    async (keyId: string, isCurrentlyDisabled: boolean) => {
       setActionLoading(keyId);
       try {
-        const req = new Request(`${API_BASE}/api/keys/${keyId}`, {
-          method: "DELETE",
+        const action = isCurrentlyDisabled ? "enable" : "disable";
+        const req = new Request(`${API_BASE}/api/keys/${keyId}/${action}`, {
+          method: "PATCH",
         });
         const signed = await signRequest(req);
         const res = await fetch(signed);
-        if (!res.ok) throw new Error("Could not revoke API key");
-        setConfirmDelete(null);
-        if (revealedKey?.id === keyId) setRevealedKey(null);
+        if (!res.ok) throw new Error(`Could not ${action} API key`);
+        setConfirmDisable(null);
         await fetchKeys();
       } catch (err: any) {
         setError(err.message);
@@ -132,7 +132,7 @@ export function ApiKeysPage() {
         setActionLoading(null);
       }
     },
-    [signRequest, fetchKeys, revealedKey],
+    [signRequest, fetchKeys],
   );
 
   const handleCopy = useCallback(async () => {
@@ -241,8 +241,15 @@ export function ApiKeysPage() {
           {keys.map((key) => (
             <div key={key.id} className="p-4">
               <div className="flex items-center justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium truncate">{key.description}</p>
+                <div className={`min-w-0 flex-1 ${!key.active ? "opacity-50" : ""}`}>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium truncate">{key.description}</p>
+                    {!key.active && (
+                      <span className="text-xs bg-yellow-900/50 text-yellow-500 px-1.5 py-0.5 rounded">
+                        Disabled
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-muted-foreground mt-0.5 font-mono">
                     {key.key_prefix}...
                   </p>
@@ -274,14 +281,14 @@ export function ApiKeysPage() {
                         No
                       </Button>
                     </>
-                  ) : confirmDelete === key.id ? (
+                  ) : confirmDisable === key.id ? (
                     <>
-                      <span className="text-xs text-destructive self-center mr-1">
-                        Delete?
+                      <span className="text-xs text-yellow-500 self-center mr-1">
+                        Disable?
                       </span>
                       <Button
-                        variant="destructive"
-                        onClick={() => handleDelete(key.id)}
+                        variant="outline"
+                        onClick={() => handleToggleDisable(key.id, false)}
                         disabled={actionLoading === key.id}
                         className="text-xs px-2 py-1"
                       >
@@ -289,7 +296,7 @@ export function ApiKeysPage() {
                       </Button>
                       <Button
                         variant="ghost"
-                        onClick={() => setConfirmDelete(null)}
+                        onClick={() => setConfirmDisable(null)}
                         className="text-xs px-2 py-1"
                       >
                         No
@@ -297,25 +304,35 @@ export function ApiKeysPage() {
                     </>
                   ) : (
                     <>
+                      {key.active && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setConfirmDisable(null);
+                            setConfirmRotate(key.id);
+                          }}
+                          className="text-xs"
+                        >
+                          Rotate
+                        </Button>
+                      )}
                       <Button
-                        variant="outline"
+                        variant={key.active ? "ghost" : "outline"}
                         onClick={() => {
-                          setConfirmDelete(null);
-                          setConfirmRotate(key.id);
+                          if (key.active) {
+                            setConfirmRotate(null);
+                            setConfirmDisable(key.id);
+                          } else {
+                            handleToggleDisable(key.id, true);
+                          }
                         }}
-                        className="text-xs"
+                        disabled={actionLoading === key.id}
+                        className={key.active
+                          ? "text-xs text-muted-foreground hover:text-yellow-500"
+                          : "text-xs text-primary"
+                        }
                       >
-                        Rotate
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          setConfirmRotate(null);
-                          setConfirmDelete(key.id);
-                        }}
-                        className="text-xs text-muted-foreground hover:text-destructive"
-                      >
-                        Delete
+                        {key.active ? "Disable" : "Enable"}
                       </Button>
                     </>
                   )}

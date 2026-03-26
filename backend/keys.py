@@ -119,9 +119,9 @@ def list_keys(user: JWTUser = Depends(jwt_auth)):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, key_prefix, description, plan, created_at, revoked_at
+                SELECT id, key_prefix, description, plan, created_at, revoked_at, disabled_at
                 FROM api_keys
-                WHERE user_sub = %s
+                WHERE user_sub = %s AND revoked_at IS NULL
                 ORDER BY created_at DESC
             """, (user.sub,))
             rows = cur.fetchall()
@@ -136,8 +136,8 @@ def list_keys(user: JWTUser = Depends(jwt_auth)):
             'plan': r[3],
             'lookups_limit': get_plan(r[3])['monthly_limit'],
             'created_at': r[4].isoformat() if r[4] else None,
-            'revoked_at': r[5].isoformat() if r[5] else None,
-            'active': r[5] is None,
+            'disabled_at': r[6].isoformat() if r[6] else None,
+            'active': r[6] is None,
         }
         for r in rows
     ]
@@ -193,15 +193,15 @@ def rotate_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
     }
 
 
-@router.delete('/{key_id}')
-def revoke_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
-    """Revoke (soft-delete) an API key."""
+@router.patch('/{key_id}/disable')
+def disable_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
+    """Disable an API key. Disabled keys still count toward usage but reject new lookups."""
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE api_keys SET revoked_at = NOW()
-                WHERE id = %s AND user_sub = %s AND revoked_at IS NULL
+                UPDATE api_keys SET disabled_at = NOW()
+                WHERE id = %s AND user_sub = %s AND revoked_at IS NULL AND disabled_at IS NULL
                 RETURNING id
             """, (key_id, user.sub))
             row = cur.fetchone()
@@ -210,6 +210,28 @@ def revoke_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
         conn.close()
 
     if not row:
-        raise HTTPException(status_code=404, detail='Key not found or already revoked')
+        raise HTTPException(status_code=404, detail='Key not found, already disabled, or revoked')
 
-    return {'id': key_id, 'revoked': True}
+    return {'id': key_id, 'disabled': True}
+
+
+@router.patch('/{key_id}/enable')
+def enable_key(key_id: str, user: JWTUser = Depends(jwt_auth)):
+    """Re-enable a disabled API key."""
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE api_keys SET disabled_at = NULL
+                WHERE id = %s AND user_sub = %s AND revoked_at IS NULL AND disabled_at IS NOT NULL
+                RETURNING id
+            """, (key_id, user.sub))
+            row = cur.fetchone()
+            conn.commit()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail='Key not found, not disabled, or revoked')
+
+    return {'id': key_id, 'enabled': True}

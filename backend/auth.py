@@ -102,7 +102,7 @@ def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, user_sub, plan, email
+                SELECT id, user_sub, plan, email, disabled_at
                 FROM api_keys
                 WHERE key_hash = %s AND revoked_at IS NULL
             """, (key_hash,))
@@ -112,6 +112,9 @@ def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str
 
     if not row:
         raise HTTPException(status_code=401, detail='Invalid or revoked API key')
+
+    if row[4] is not None:
+        raise HTTPException(status_code=403, detail='API key is disabled')
 
     return APIKeyUser(
         consumer_id=str(row[0]),
