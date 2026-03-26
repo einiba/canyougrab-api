@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import dns.resolver
 
-from domain_cache import get_cached_domain, cache_domain
+from domain_cache import get_cached_domain, cache_domain as _cache_domain_raw
 from dns_client import check_domain_dns
 from whois_client import check_domain_whois
 from rdap_stats import record_rdap_outcome
@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 # Per-domain timing stats (populated during profiling)
 _profiling_enabled = True
+
+
+def cache_domain(domain: str, result: dict) -> None:
+    """Cache a domain result, skipping synthetic health check domains."""
+    if domain.startswith('_healthcheck'):
+        return
+    _cache_domain_raw(domain, result)
 
 
 def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
@@ -47,9 +54,12 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     domain = domain.lower().strip().rstrip('.')
     t_start = time.monotonic()
 
+    # Health check synthetic domains bypass cache to always exercise real services
+    is_synthetic = domain.startswith('_healthcheck')
+
     # ── Step 1: Cache check ──────────────────────────────────────
     t0 = time.monotonic()
-    cached = get_cached_domain(domain)
+    cached = None if is_synthetic else get_cached_domain(domain)
     t_cache = time.monotonic() - t0
     if cached is not None:
         if _profiling_enabled:
