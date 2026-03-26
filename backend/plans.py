@@ -1,6 +1,7 @@
 """Plan configuration loaded from the plans table."""
 
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -8,18 +9,24 @@ from queries import get_db_conn
 
 logger = logging.getLogger(__name__)
 
+def _is_stripe_test_mode() -> bool:
+    """Detect Stripe mode from the secret key prefix."""
+    key = os.environ.get('STRIPE_SECRET_KEY', '')
+    return key.startswith('sk_test_')
+
 _plans_cache = None
 _cache_time = 0
 CACHE_TTL = 300  # 5 minutes
 
 
 def _load_plans() -> dict:
+    price_col = 'stripe_price_id_test' if _is_stripe_test_mode() else 'stripe_price_id'
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT name, display_name, price_cents, monthly_limit,
-                       minute_limit, domain_cap, requires_card, stripe_price_id, sort_order,
+                       minute_limit, domain_cap, requires_card, {price_col}, sort_order,
                        published_at, retired_at
                 FROM plans ORDER BY sort_order
             """)
@@ -42,6 +49,7 @@ def _load_plans() -> dict:
             'published_at': r[9].isoformat() if r[9] else None,
             'retired_at': r[10].isoformat() if r[10] else None,
         }
+    logger.info('Loaded %d plans using %s column', len(plans), price_col)
     return plans
 
 
