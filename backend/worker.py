@@ -20,7 +20,7 @@ if _backend_dir not in sys.path:
 from rq import Worker
 
 from valkey_client import get_valkey, get_rq_connection, get_rq_queue, fail_job
-from dns_client import create_resolver, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT
+from dns_client import create_resolver, get_resolver_pool, DNS_RESOLVER_HOSTNAME, DNS_RESOLVER_PORT, MULTI_RESOLVER_ENABLED
 from whois_client import WHOIS_HOSTNAME, WHOIS_PORT
 
 logging.basicConfig(
@@ -132,6 +132,27 @@ def main():
     registry = _get_registry()
     disabled = sum(1 for v in registry.values() if v['whois_disabled'])
     logger.info('TLD registry loaded: %d TLDs (%d with WHOIS disabled)', len(registry), disabled)
+
+    # Initialize multi-resolver pool (loads nameservers from DB)
+    if MULTI_RESOLVER_ENABLED:
+        try:
+            pool = get_resolver_pool()
+            pool.initialize(valkey_client=r)
+            logger.info('Multi-resolver pool: %d servers', pool.server_count)
+
+            # Background thread: recalculate caps every 30s
+            def _cap_recalc_loop():
+                while True:
+                    time.sleep(30)
+                    try:
+                        pool.recalculate_caps()
+                    except Exception as e:
+                        logger.warning('Cap recalculation error: %s', e)
+
+            t = threading.Thread(target=_cap_recalc_loop, daemon=True)
+            t.start()
+        except Exception as e:
+            logger.warning('Multi-resolver init failed, using Unbound only: %s', e)
 
     # Start background health checker for DNS + WHOIS
     start_health_checker(resolver)
