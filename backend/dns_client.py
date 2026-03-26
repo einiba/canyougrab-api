@@ -199,16 +199,41 @@ class ResolverPool:
                 if total < 5:
                     continue  # Not enough data
 
+                # Only adjust caps downward for servers that had errors recently.
+                # Error-free servers with high volume get a small cap increase.
+                if error == 0:
+                    new_cap = s.estimated_cap_qps
+                    if success > 50:
+                        # Proven under load with zero errors — increase cap
+                        new_cap = min(s.estimated_cap_qps * 1.1, 500)
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE nameservers SET
+                                estimated_cap_qps = %s,
+                                success_count_3m = %s,
+                                last_success_at = NOW(),
+                                updated_at = NOW()
+                            WHERE id = %s
+                        """, (new_cap, success, s.id))
+                    conn.commit()
+                    if new_cap != s.estimated_cap_qps:
+                        self._valkey.set(f'ns:cap:{s.id}', str(new_cap), ex=300)
+                        s.estimated_cap_qps = new_cap
+                    continue
+
                 error_rate = error / total
 
                 if error_rate > 0.5:
                     new_cap = max(0.1, s.estimated_cap_qps * 0.5)
                 elif error_rate > 0.1:
                     new_cap = s.estimated_cap_qps * (1 - error_rate)
-                elif error_rate < 0.02 and total > 50:
-                    new_cap = min(s.estimated_cap_qps * 1.2, 500)
                 else:
-                    new_cap = s.estimated_cap_qps
+                    # Errors present but low rate — slight reduction
+                    new_cap = s.estimated_cap_qps * 0.95
+
+                # Servers recovering (error rate dropping) get a boost
+                if error_rate < 0.05 and s.estimated_cap_qps < 1.0:
+                    new_cap = min(s.estimated_cap_qps * 1.3, 500)
 
                 # Update DB
                 with conn.cursor() as cur:
@@ -217,30 +242,32 @@ class ResolverPool:
                             estimated_cap_qps = %s,
                             success_count_3m = %s,
                             error_count_3m = %s,
-                            last_error_at = CASE WHEN %s > 0 THEN NOW() ELSE last_error_at END,
+                            last_error_at = NOW(),
                             last_success_at = CASE WHEN %s > 0 THEN NOW() ELSE last_success_at END,
                             updated_at = NOW()
                         WHERE id = %s
-                    """, (new_cap, success, error, error, success, s.id))
+                    """, (new_cap, success, error, success, s.id))
                 conn.commit()
 
                 # Update Valkey hot cache
                 self._valkey.set(f'ns:cap:{s.id}', str(new_cap), ex=300)
                 s.estimated_cap_qps = new_cap
 
-                if total > 10:
-                    logger.info('Nameserver %s: cap=%.1f (success=%d error=%d rate=%.1f%%)',
-                                s.name, new_cap, success, error, error_rate * 100)
+                logger.info('Nameserver %s: cap=%.1f (success=%d error=%d rate=%.1f%%)',
+                            s.name, new_cap, success, error, error_rate * 100)
 
             conn.close()
 
-            # Decay counters (half-life)
+            # Only decay counters for servers that had errors — clean servers
+            # keep their counters until Valkey TTL (3 min) expires naturally
             for s in servers:
-                for suffix in ('success', 'error'):
-                    key = f'ns:stats:{s.id}:{suffix}'
-                    val = int(self._valkey.get(key) or 0)
-                    if val > 0:
-                        self._valkey.set(key, str(val // 2), ex=180)
+                error_count = int(self._valkey.get(f'ns:stats:{s.id}:error') or 0)
+                if error_count > 0:
+                    for suffix in ('success', 'error'):
+                        key = f'ns:stats:{s.id}:{suffix}'
+                        val = int(self._valkey.get(key) or 0)
+                        if val > 0:
+                            self._valkey.set(key, str(val // 2), ex=180)
 
         except Exception as e:
             logger.warning('Failed to recalculate nameserver caps: %s', e)
