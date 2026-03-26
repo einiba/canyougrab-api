@@ -1,0 +1,67 @@
+name: Build & Push Prod Docker Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'mcp-server/**'
+      - 'portal/**'
+      - 'shared/**'
+      - 'Dockerfile'
+      - 'portal/Dockerfile'
+      - '.github/workflows/docker-build-prod.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: registry.digitalocean.com/canyougrab
+
+jobs:
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN_PROD }}
+
+      - name: Login to DOCR
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build and push API image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          docker build \
+            -t $REGISTRY/api:prod-$SHA \
+            -t $REGISTRY/api:prod-latest \
+            .
+          docker push $REGISTRY/api:prod-$SHA
+          docker push $REGISTRY/api:prod-latest
+
+  build-portal:
+    name: Build Portal Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN_PROD }}
+
+      - name: Login to DOCR
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build and push portal image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          docker build \
+            -f portal/Dockerfile \
+            -t $REGISTRY/portal:prod-$SHA \
+            -t $REGISTRY/portal:prod-latest \
+            .
+          docker push $REGISTRY/portal:prod-$SHA
+          docker push $REGISTRY/portal:prod-latest
