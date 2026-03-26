@@ -8,7 +8,7 @@ const overrideCssPlugin: ZudokuPlugin = {
     <>
       <link rel="stylesheet" href="/overrides.css" />
       <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer />
-      <script src="/chatwoot-init.js" defer />
+
     </>
   ),
 };

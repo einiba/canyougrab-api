@@ -1,8 +1,10 @@
 import { ReactNode } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { useAuth } from "@/hooks/useAuth";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated, isPending, login } = useAuth();
+  const { error: authError } = useAuth0();
 
   if (isPending) {
     return (
@@ -13,7 +15,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    login();
+    // Don't auto-redirect to login if Auth0 returned an error —
+    // App.tsx will display the error message instead.
+    if (!authError) {
+      login();
+    }
     return null;
   }
 

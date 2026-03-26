@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
 import { useSession } from "@/hooks/useSession";
@@ -18,19 +17,6 @@ export function AppLayout() {
 
   // Upsert user record on login
   useSession();
-
-  // Identify user to Chatwoot when authenticated
-  useEffect(() => {
-    if (!isAuthenticated || !profile) return;
-    const cw = (window as any).$chatwoot;
-    if (cw) {
-      cw.setUser(profile.sub, {
-        email: profile.email,
-        name: profile.name,
-        avatar_url: profile.pictureUrl,
-      });
-    }
-  }, [isAuthenticated, profile]);
 
   return (
     <div className="min-h-screen flex flex-col">
