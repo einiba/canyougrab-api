@@ -14,8 +14,9 @@ COPY mcp-server/ /app/mcp-server/
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir "/app/mcp-server[remote]"
 
-# Copy application code
+# Copy application code + scripts
 COPY backend/ /app/
+COPY scripts/ /app/scripts/
 
 EXPOSE 8000 8001
 
