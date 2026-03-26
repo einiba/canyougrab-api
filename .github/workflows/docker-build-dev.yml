@@ -57,8 +57,9 @@ jobs:
         run: |
           SHA=$(git rev-parse --short HEAD)
           docker build \
+            -f portal/Dockerfile \
             -t $REGISTRY/portal:dev-$SHA \
             -t $REGISTRY/portal:dev-latest \
-            portal/
+            .
           docker push $REGISTRY/portal:dev-$SHA
           docker push $REGISTRY/portal:dev-latest
