@@ -63,9 +63,19 @@ def check_domain_dns(domain: str, resolver: dns.resolver.Resolver) -> dict:
         return {"domain": domain, "available": False, "tld": tld, "dns_status": "noanswer"}
 
     except dns.resolver.NoNameservers:
-        # All nameservers failed (SERVFAIL) — ambiguous, do not claim available
-        logger.warning('SERVFAIL for domain %s', domain)
-        return {"domain": domain, "available": None, "error": "dns_servfail", "dns_status": "servfail"}
+        # SERVFAIL — retry once after a short pause (often transient under load)
+        import time
+        time.sleep(0.2)
+        try:
+            resolver.resolve(domain, 'NS')
+            return {"domain": domain, "available": False, "tld": tld, "dns_status": "noerror_ns_retry"}
+        except dns.resolver.NXDOMAIN:
+            return {"domain": domain, "available": True, "tld": tld, "dns_status": "nxdomain_retry"}
+        except dns.resolver.NoAnswer:
+            return {"domain": domain, "available": False, "tld": tld, "dns_status": "noanswer_retry"}
+        except Exception:
+            logger.warning('SERVFAIL for domain %s (retry also failed)', domain)
+            return {"domain": domain, "available": None, "error": "dns_servfail", "dns_status": "servfail"}
 
     except dns.exception.Timeout:
         logger.warning('DNS timeout for domain %s', domain)
