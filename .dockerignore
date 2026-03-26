@@ -1,0 +1,11 @@
+.git
+.github
+__pycache__
+*.pyc
+node_modules
+portal/node_modules
+infra/
+config/
+docs/
+.env*
+*.md
