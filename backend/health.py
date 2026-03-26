@@ -58,6 +58,40 @@ def _check_valkey() -> dict:
         return {"status": "error", "latency_ms": latency_ms, "error": str(e)}
 
 
+def _check_bloom() -> dict:
+    """Tier 2: Zone bloom filter availability check."""
+    start = time.monotonic()
+    try:
+        from zone_bloom import check_domain_bloom, meta_key
+        v = get_valkey()
+
+        # Check which TLDs have bloom filters loaded
+        loaded_tlds = []
+        for tld in ['com', 'net', 'org']:
+            meta = v.hgetall(meta_key(tld))
+            if meta:
+                count = meta.get(b'domains_loaded') or meta.get('domains_loaded', '0')
+                loaded_tlds.append({"tld": tld, "domains": int(count)})
+
+        latency_ms = round((time.monotonic() - start) * 1000)
+
+        if not loaded_tlds:
+            return {"status": "degraded", "latency_ms": latency_ms, "message": "no bloom filters loaded"}
+
+        # Verify a known domain returns True
+        result = check_domain_bloom(v, "google.com")
+        if result is True:
+            return {"status": "ok", "latency_ms": latency_ms, "tlds": loaded_tlds}
+        elif result is False:
+            return {"status": "error", "latency_ms": latency_ms, "error": "google.com not found in .com bloom filter"}
+        else:
+            return {"status": "degraded", "latency_ms": latency_ms, "message": "bloom filter not loaded for .com", "tlds": loaded_tlds}
+
+    except Exception as e:
+        latency_ms = round((time.monotonic() - start) * 1000)
+        return {"status": "degraded", "latency_ms": latency_ms, "error": str(e)}
+
+
 def _check_dns() -> dict:
     """Tier 2: DNS known-answer test. Resolve _healthcheck.test via Unbound."""
     start = time.monotonic()
@@ -254,6 +288,7 @@ def health_ready():
     whois = _check_whois()
     workers = _check_workers()
     mcp = _check_mcp()
+    bloom = _check_bloom()
 
     components = {
         "valkey": valkey,
@@ -261,6 +296,7 @@ def health_ready():
         "whois_service": whois,
         "workers": workers,
         "mcp_server": mcp,
+        "zone_bloom": bloom,
     }
 
     # Determine overall status
@@ -287,12 +323,16 @@ def health_ready():
 
 
 # Synthetic test domains — each exercises a specific service path:
-# 1. example.com (.com, registered) — DNS NOERROR → proves Unbound works
-# 2. _healthcheck-not-registered.com (.com, unregistered) — DNS NXDOMAIN → RDAP 404 → proves RDAP path works
-# 3. _healthcheck-not-registered.us (.us, unregistered) — DNS NXDOMAIN → no RDAP → legacy WHOIS → proves WHOIS fallback works
+# Synthetic domains exercise every service path:
+# 1. google.com — bloom filter hit (registered .com, skips DNS+RDAP entirely)
+# 2. example.com — registered via DNS (may also bloom-hit, proves Unbound works)
+# 3. _healthcheck-not-registered.com — bloom miss → DNS NXDOMAIN → RDAP 404 (proves RDAP path)
+# 4. _healthcheck-not-registered.us — bloom miss → DNS NXDOMAIN → no RDAP → legacy WHOIS
+# 5. _healthcheck-bloom-miss.net — bloom miss for .net (proves .net filter works on misses)
 SYNTHETIC_DOMAINS = [
+    {"domain": "google.com", "expect_available": False, "path": "bloom", "description": "Zone bloom filter hit (.com registered)"},
     {"domain": "example.com", "expect_available": False, "path": "dns", "description": "Unbound DNS (registered .com)"},
-    {"domain": "_healthcheck-not-registered.com", "expect_available": True, "path": "rdap", "description": "RDAP via rust-whois (unregistered .com)"},
+    {"domain": "_healthcheck-not-registered.com", "expect_available": True, "path": "rdap", "description": "Bloom miss → RDAP via rust-whois (unregistered .com)"},
     {"domain": "_healthcheck-not-registered.us", "expect_available": True, "path": "whois", "description": "Legacy WHOIS fallback (unregistered .us, no RDAP)"},
 ]
 
@@ -393,11 +433,24 @@ def health_deep():
             else:
                 step_data["status"] = "ok"
 
-            # Check source matches expected path (dns, rdap, or whois)
+            # Check source matches expected path (bloom, dns, rdap, or whois)
+            source_map = {"bloom": "zone_bloom", "dns": "dns", "rdap": "rdap", "whois": "whois"}
+            expected_source = source_map.get(expected_path, expected_path)
             if actual_source == "cache":
                 # Cached result — can't verify the path, but availability is correct
                 step_data["note"] = "result was cached, source path not re-verified"
-            elif expected_path in ("rdap", "whois") and actual_source not in (expected_path, "cache"):
+            elif expected_path == "bloom" and actual_source != "zone_bloom":
+                # Bloom filter expected but didn't hit — filter may not be loaded
+                step_data["source_mismatch"] = True
+                if actual_available == expect_available:
+                    # Correct answer via fallback path — degraded, not error
+                    step_data["status"] = "degraded"
+                    step_data["warning"] = f"bloom filter miss, fell through to {actual_source}"
+                else:
+                    step_data["status"] = "error"
+                    step_data["error"] = f"bloom miss + wrong answer: expected available={expect_available}"
+                    verification_errors.append(f"{domain}: bloom miss + wrong answer")
+            elif expected_path in ("rdap", "whois") and actual_source not in (expected_source, "cache", "zone_bloom"):
                 # Source doesn't match — e.g., RDAP fell back to WHOIS or vice versa
                 step_data["source_mismatch"] = True
                 step_data["warning"] = f"expected source={expected_path}, got {actual_source}"

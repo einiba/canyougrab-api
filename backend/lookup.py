@@ -68,6 +68,43 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
                         domain, t_cache * 1000, t_cache * 1000)
         return cached
 
+    # ── Step 1b: Zone bloom filter check ───────────────────────
+    # Fast-path for registered domains in TLDs with zone file bloom filters.
+    # Bloom filter hit = definitely registered (skip DNS + WHOIS entirely).
+    # Bloom filter miss = definitely NOT registered in zone file, continue to DNS.
+    # Health check synthetic domains bypass bloom to exercise real services.
+    if not is_synthetic:
+        try:
+            from zone_bloom import check_domain_bloom
+            from valkey_client import get_valkey
+            t0_bloom = time.monotonic()
+            bloom_result = check_domain_bloom(get_valkey(), domain)
+            t_bloom = time.monotonic() - t0_bloom
+
+            if bloom_result is True:
+                # Bloom filter says registered — high confidence, cache it
+                now = datetime.now(timezone.utc).isoformat()
+                parts = domain.split('.')
+                tld = parts[-1] if len(parts) >= 2 else ''
+                result = {
+                    'domain': domain,
+                    'available': False,
+                    'confidence': 'high',
+                    'tld': tld,
+                    'source': 'zone_bloom',
+                    'checked_at': now,
+                }
+                if _profiling_enabled:
+                    logger.info('PROFILE %s cache_ms=%.1f bloom_ms=%.3f bloom_hit=1 total_ms=%.1f',
+                                domain, t_cache * 1000, t_bloom * 1000,
+                                (time.monotonic() - t_start) * 1000)
+                # Cache bloom hits with long TTL (zone files are daily)
+                cache_domain(domain, result, ttl=86400)
+                return result
+            # bloom_result is False or None — continue to DNS
+        except Exception:
+            pass  # Bloom filter is best-effort — never block the pipeline
+
     # ── Step 2: DNS NS query ─────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
     t0 = time.monotonic()
