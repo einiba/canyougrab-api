@@ -114,42 +114,86 @@ def _check_whois() -> dict:
         return {"status": "error", "latency_ms": latency_ms, "error": str(e)}
 
 
+# MCP health check URL — checks the public ingress path (same route ChatGPT uses)
+# Falls back to localhost if no public hostname is configured
+MCP_HEALTH_URL = os.environ.get('MCP_HEALTH_URL', '')
+
+_MCP_INIT_PAYLOAD = {
+    "jsonrpc": "2.0",
+    "method": "initialize",
+    "id": "_healthcheck",
+    "params": {
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": "healthcheck", "version": "1.0"},
+    },
+}
+_MCP_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+}
+
+
 def _check_mcp() -> dict:
-    """Tier 2: MCP server liveness check. POST to /mcp and expect a JSON-RPC response."""
+    """Tier 2: MCP server liveness — checks BOTH local sidecar AND public ingress path.
+
+    Local check proves the MCP process is running.
+    Public check proves the full path works (ingress → service → pod) — the same
+    route that ChatGPT/Claude use. A 502 at the ingress would only be caught here.
+    """
     start = time.monotonic()
     mcp_port = int(os.environ.get('MCP_PORT', '8001'))
+    checks = {}
+
+    # Check 1: Local sidecar (proves process is alive)
     try:
         resp = httpx.post(
             f"http://127.0.0.1:{mcp_port}/mcp",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-            json={
-                "jsonrpc": "2.0",
-                "method": "initialize",
-                "id": "_healthcheck",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "healthcheck", "version": "1.0"},
-                },
-            },
+            headers=_MCP_HEADERS,
+            json=_MCP_INIT_PAYLOAD,
             timeout=5.0,
         )
         latency_ms = round((time.monotonic() - start) * 1000)
-
         if resp.status_code == 200:
-            return {"status": "ok", "latency_ms": latency_ms}
-        return {"status": "error", "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
-
-    except httpx.ConnectError:
-        latency_ms = round((time.monotonic() - start) * 1000)
-        return {"status": "error", "latency_ms": latency_ms, "error": f"MCP server not listening on port {mcp_port}"}
-
+            checks["local"] = {"status": "ok", "latency_ms": latency_ms}
+        else:
+            checks["local"] = {"status": "error", "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
     except Exception as e:
         latency_ms = round((time.monotonic() - start) * 1000)
-        return {"status": "error", "latency_ms": latency_ms, "error": str(e)}
+        checks["local"] = {"status": "error", "latency_ms": latency_ms, "error": str(e)}
+
+    # Check 2: Public ingress path (proves end-to-end routing works)
+    if MCP_HEALTH_URL:
+        t0 = time.monotonic()
+        try:
+            resp = httpx.post(
+                MCP_HEALTH_URL,
+                headers=_MCP_HEADERS,
+                json=_MCP_INIT_PAYLOAD,
+                timeout=10.0,
+                follow_redirects=True,
+            )
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            if resp.status_code == 200:
+                checks["public"] = {"status": "ok", "latency_ms": latency_ms}
+            else:
+                checks["public"] = {"status": "error", "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            checks["public"] = {"status": "error", "latency_ms": latency_ms, "error": str(e)}
+
+    total_ms = round((time.monotonic() - start) * 1000)
+
+    # Both must pass
+    all_ok = all(c["status"] == "ok" for c in checks.values())
+    any_error = any(c["status"] == "error" for c in checks.values())
+
+    if all_ok:
+        return {"status": "ok", "latency_ms": total_ms, "checks": checks}
+    elif any_error:
+        first_error = next(c.get("error") for c in checks.values() if c.get("error"))
+        return {"status": "error", "latency_ms": total_ms, "error": first_error, "checks": checks}
+    return {"status": "degraded", "latency_ms": total_ms, "checks": checks}
 
 
 def _check_workers() -> dict:
