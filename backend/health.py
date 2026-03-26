@@ -114,6 +114,44 @@ def _check_whois() -> dict:
         return {"status": "error", "latency_ms": latency_ms, "error": str(e)}
 
 
+def _check_mcp() -> dict:
+    """Tier 2: MCP server liveness check. POST to /mcp and expect a JSON-RPC response."""
+    start = time.monotonic()
+    mcp_port = int(os.environ.get('MCP_PORT', '8001'))
+    try:
+        resp = httpx.post(
+            f"http://127.0.0.1:{mcp_port}/mcp",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": "_healthcheck",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "healthcheck", "version": "1.0"},
+                },
+            },
+            timeout=5.0,
+        )
+        latency_ms = round((time.monotonic() - start) * 1000)
+
+        if resp.status_code == 200:
+            return {"status": "ok", "latency_ms": latency_ms}
+        return {"status": "error", "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
+
+    except httpx.ConnectError:
+        latency_ms = round((time.monotonic() - start) * 1000)
+        return {"status": "error", "latency_ms": latency_ms, "error": f"MCP server not listening on port {mcp_port}"}
+
+    except Exception as e:
+        latency_ms = round((time.monotonic() - start) * 1000)
+        return {"status": "error", "latency_ms": latency_ms, "error": str(e)}
+
+
 def _check_workers() -> dict:
     """Tier 2: Check RQ worker heartbeats via Valkey."""
     start = time.monotonic()
@@ -171,19 +209,21 @@ def health_ready():
     dns = _check_dns()
     whois = _check_whois()
     workers = _check_workers()
+    mcp = _check_mcp()
 
     components = {
         "valkey": valkey,
         "dns_resolver": dns,
         "whois_service": whois,
         "workers": workers,
+        "mcp_server": mcp,
     }
 
     # Determine overall status
     statuses = [c["status"] for c in components.values()]
     if all(s == "ok" for s in statuses):
         overall = "healthy"
-    elif valkey["status"] == "error" or workers["status"] == "error":
+    elif valkey["status"] == "error" or workers["status"] == "error" or mcp["status"] == "error":
         # Critical path broken
         overall = "unhealthy"
     else:
@@ -299,12 +339,18 @@ def health_deep():
         if verification_errors:
             raise Exception("; ".join(verification_errors))
 
+        # Step 4: MCP server check — must return HTTP 200
+        mcp_result = _check_mcp()
+        steps["mcp_server"] = mcp_result
+        if mcp_result["status"] != "ok":
+            raise Exception(f"MCP server: {mcp_result.get('error', 'not healthy')}")
+
         total_ms = round((time.monotonic() - start) * 1000)
 
         # Reset circuit breaker on success
         _deep_circuit["failures"] = 0
 
-        # Determine overall: healthy if both paths ok, degraded if whois path degraded
+        # Determine overall: healthy if all paths ok, degraded if whois path degraded
         whois_status = steps.get("whois_path", {}).get("status", "ok")
         overall = "healthy" if whois_status == "ok" else "degraded"
 

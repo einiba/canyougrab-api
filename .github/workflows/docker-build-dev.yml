@@ -7,6 +7,7 @@ on:
       - 'backend/**'
       - 'mcp-server/**'
       - 'portal/**'
+      - 'scripts/**'
       - 'Dockerfile'
       - 'portal/Dockerfile'
       - '.github/workflows/docker-build-dev.yml'
