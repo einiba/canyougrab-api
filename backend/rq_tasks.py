@@ -9,7 +9,7 @@ import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from valkey_client import claim_job, complete_job, fail_job, get_valkey
+from valkey_client import claim_job, complete_job, complete_sub_job, fail_job, get_valkey
 from dns_client import create_resolver
 from lookup import check_domain
 
@@ -35,12 +35,16 @@ def process_domain_job(job_key: str):
     that holds the domain list and status.  Results are written
     back to the same hash by complete_job() / fail_job().
     """
-    parts = job_key.split(':', 1)
-    if len(parts) != 2 or not parts[1]:
+    # Job keys: 'job:<uuid>' (regular) or 'job:rdap:<uuid>' / 'job:whois:<uuid>' (sub-job)
+    parts = job_key.split(':')
+    if len(parts) < 2:
         logger.error('Invalid job key: %s', job_key)
         return
 
-    job_id = parts[1]
+    # For sub-jobs (job:rdap:uuid), job_id is the full key minus 'job:' prefix
+    # For regular jobs (job:uuid), job_id is just the uuid
+    job_id = ':'.join(parts[1:])
+    is_sub_job = len(parts) == 3  # job:rdap:uuid or job:whois:uuid
 
     t_job_start = time.monotonic()
 
@@ -69,7 +73,10 @@ def process_domain_job(job_key: str):
         t_pool = time.monotonic() - t0
 
         t0 = time.monotonic()
-        complete_job(job_id, results, queued_at=queued_at)
+        if is_sub_job:
+            complete_sub_job(job_key, results, queued_at=queued_at)
+        else:
+            complete_job(job_id, results, queued_at=queued_at)
         t_complete = time.monotonic() - t0
 
         t_total = time.monotonic() - t_job_start
@@ -89,13 +96,17 @@ def process_domain_job(job_key: str):
         )
 
         # Push processing time to metrics list for the exporter to consume
-        r = get_valkey()
-        response_time = r.hget(f'job:{job_id}', 'response_time_ms')
-        if response_time:
-            r.lpush('metrics:processing_times', response_time)
-            r.ltrim('metrics:processing_times', 0, 9999)  # cap at 10k entries
+        if not is_sub_job:
+            r = get_valkey()
+            response_time = r.hget(f'job:{job_id}', 'response_time_ms')
+            if response_time:
+                r.lpush('metrics:processing_times', response_time)
+                r.ltrim('metrics:processing_times', 0, 9999)  # cap at 10k entries
 
     except Exception as e:
         logger.exception('Error processing job %s', job_id[:8])
-        fail_job(job_id, str(e))
+        if is_sub_job:
+            fail_job(job_id, str(e))  # Marks sub-job failed; parent stays pending
+        else:
+            fail_job(job_id, str(e))
         raise  # Re-raise so RQ marks the job as failed and can retry

@@ -20,6 +20,7 @@ from domain_cache import get_cached_domain, cache_domain as _cache_domain_raw
 from dns_client import check_domain_dns
 from whois_client import check_domain_whois
 from rdap_stats import record_rdap_outcome
+from rdap_router import record_rdap_result
 from tld_registry import is_whois_disabled
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         cache_domain(domain, result)
         _profile_whois('rdap_domain_not_found')
         record_rdap_outcome(tld, 'rdap_domain_not_found')
+        record_rdap_result(tld, success=True)
         return result
 
     # RDAP rate limited (429) — trust DNS NXDOMAIN, don't wait for WHOIS
@@ -199,6 +201,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         cache_domain(domain, result)  # skipped (medium confidence)
         _profile_whois('rdap_rate_limited')
         record_rdap_outcome(tld, 'rdap_rate_limited')
+        record_rdap_result(tld, success=False)
         return result
 
     if whois_data is not None and whois_data.get('expiration_date'):
@@ -221,6 +224,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         cache_domain(domain, result)
         _profile_whois('registered')
         record_rdap_outcome(tld, 'rdap_success' if lookup_source == 'rdap' else 'whois_fallback')
+        record_rdap_result(tld, success=(lookup_source == 'rdap'))
         return result
 
     # WHOIS confirms available (no record found)
@@ -238,6 +242,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         cache_domain(domain, result)
         _profile_whois('available')
         record_rdap_outcome(tld, 'rdap_success' if lookup_source == 'rdap' else 'whois_fallback')
+        record_rdap_result(tld, success=(lookup_source == 'rdap'))
         return result
 
     # WHOIS failed/timed out — DNS NXDOMAIN is our only signal.
@@ -258,4 +263,5 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     cache_domain(domain, result)  # skipped unless high confidence
     _profile_whois('failed')
     record_rdap_outcome(tld, 'rdap_error')
+    record_rdap_result(tld, success=False)
     return result

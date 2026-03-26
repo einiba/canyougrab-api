@@ -22,7 +22,7 @@ from queries import (
     get_monthly_usage, get_monthly_detailed_usage,
     record_minute_usage, get_minute_usage, get_minute_detailed_usage,
 )
-from valkey_client import create_job, get_job_status, get_job_results, get_valkey
+from valkey_client import create_job, create_split_job, get_job_status, get_job_results, get_valkey
 from keys import router as keys_router
 from billing import billing_router, stripe_router
 from antifraud import antifraud_router
@@ -199,7 +199,7 @@ async def do_bulk_check(
     # Enqueue job for worker processing
     job_id = str(uuid.uuid4())
     try:
-        create_job(job_id, consumer, domains)
+        create_split_job(job_id, consumer, domains)
     except Exception as e:
         logger.error('Failed to enqueue job: %s', e)
         return JSONResponse({'error': 'Service temporarily unavailable'}, status_code=503)
