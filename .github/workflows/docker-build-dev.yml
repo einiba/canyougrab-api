@@ -1,0 +1,64 @@
+name: Build & Push Dev Docker Images
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'backend/**'
+      - 'mcp-server/**'
+      - 'portal/**'
+      - 'Dockerfile'
+      - 'portal/Dockerfile'
+      - '.github/workflows/docker-build-dev.yml'
+
+env:
+  REGISTRY: registry.digitalocean.com/canyougrab
+
+jobs:
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Login to DOCR
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build and push API image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          docker build \
+            -t $REGISTRY/api:dev-$SHA \
+            -t $REGISTRY/api:dev-latest \
+            .
+          docker push $REGISTRY/api:dev-$SHA
+          docker push $REGISTRY/api:dev-latest
+
+  build-portal:
+    name: Build Portal Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Login to DOCR
+        run: doctl registry login --expiry-seconds 600
+
+      - name: Build and push portal image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          docker build \
+            -t $REGISTRY/portal:dev-$SHA \
+            -t $REGISTRY/portal:dev-latest \
+            portal/
+          docker push $REGISTRY/portal:dev-$SHA
+          docker push $REGISTRY/portal:dev-latest
