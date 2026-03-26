@@ -375,7 +375,7 @@ def main():
         import uvicorn
 
         app = _create_remote_app()
-        host = os.environ.get("MCP_HOST", "127.0.0.1")
+        host = os.environ.get("MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("MCP_PORT", "8001"))
         uvicorn.run(
             app,
