@@ -20,6 +20,7 @@ scrape_configs:
       - targets: ['localhost:9121']
 
   - job_name: rq_metrics
+    honor_labels: true
     static_configs:
       - targets: ['localhost:9122']
 

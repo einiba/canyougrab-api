@@ -21,14 +21,48 @@ git checkout "$REF"
 git pull origin "$REF" 2>/dev/null || true
 echo "==> Code: $(git log --oneline -1)"
 
-# --- Sync env files (split combined env into separate files for systemd) ---
-ENV_SRC="$REPO_DIR/config/env/dev-api.env"
-if [ -f "$ENV_SRC" ]; then
-    grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
-    grep -E '^(VALKEY_|WHOIS_)' "$ENV_SRC" > /opt/canyougrab/valkey.env
-    grep -E '^(STRIPE_|AUTH0_|PORTAL_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
-    echo "==> Env files synced"
+# --- Detect environment (dev or prod) ---
+# Set via CANYOUGRAB_ENV env var, or auto-detect from hostname/ref
+CANYOUGRAB_ENV="${CANYOUGRAB_ENV:-}"
+if [ -z "$CANYOUGRAB_ENV" ]; then
+    HOSTNAME_STR=$(hostname)
+    if echo "$HOSTNAME_STR" | grep -qi 'dev'; then
+        CANYOUGRAB_ENV="dev"
+    elif echo "$REF" | grep -qi 'dev'; then
+        CANYOUGRAB_ENV="dev"
+    else
+        CANYOUGRAB_ENV="prod"
+    fi
 fi
+echo "==> Environment: $CANYOUGRAB_ENV"
+
+# --- Sync env files (split combined env into separate files for systemd) ---
+# If Pulumi (cloud-init) already wrote the split env files, skip — don't overwrite
+# with potentially stale repo env files. Cloud-init is the source of truth.
+if [ -f /opt/canyougrab/app.env ] && grep -q 'DNS_RESOLVER_HOSTNAME' /opt/canyougrab/valkey.env 2>/dev/null; then
+    echo "==> Env files already managed by Pulumi (app.env), skipping"
+else
+    # Either standalone deploy or cloud-init split was incomplete — rebuild from best source
+    if [ -f /opt/canyougrab/app.env ]; then
+        ENV_SRC="/opt/canyougrab/app.env"
+        echo "==> Rebuilding env files from Pulumi-managed app.env"
+    else
+        ENV_SRC="$REPO_DIR/config/env/${CANYOUGRAB_ENV}-api.env"
+        if [ ! -f "$ENV_SRC" ]; then
+            echo "WARNING: $ENV_SRC not found, falling back to dev-api.env"
+            ENV_SRC="$REPO_DIR/config/env/dev-api.env"
+        fi
+    fi
+    if [ -f "$ENV_SRC" ]; then
+        grep '^POSTGRES_' "$ENV_SRC" > /opt/canyougrab/database.env
+        grep -E '^(VALKEY_|WHOIS_|DNS_RESOLVER)' "$ENV_SRC" > /opt/canyougrab/valkey.env
+        grep -E '^(STRIPE_|AUTH0_|PORTAL_|BATCH_)' "$ENV_SRC" > /opt/canyougrab/stripe.env
+        echo "==> Env files synced from $ENV_SRC"
+    fi
+fi
+
+# --- Install only the right nginx config for this environment ---
+rm -f /etc/nginx/sites-enabled/dev-api.conf /etc/nginx/sites-enabled/prod-api.conf 2>/dev/null || true
 
 # --- Rsync application code ---
 rsync -a --delete --exclude="__pycache__" "$REPO_DIR/backend/" "$API_DIR/"
@@ -57,9 +91,23 @@ fi
 
 # --- Sync nginx config ---
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-cp "$REPO_DIR/config/nginx/"*.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
-nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
-echo "==> Nginx synced"
+# If cloud-init (Pulumi) already wrote api.conf with LE cert paths, don't
+# overwrite with repo configs that use different SSL paths.
+if [ -f /etc/nginx/sites-enabled/api.conf ]; then
+    echo "==> Nginx: Pulumi-managed configs detected, skipping repo sync"
+else
+    # Standalone deploy (no Pulumi) — use repo configs
+    for f in "$REPO_DIR/config/nginx/${CANYOUGRAB_ENV}-"*.conf; do
+        [ -f "$f" ] && cp "$f" /etc/nginx/sites-enabled/
+    done
+    for f in "$REPO_DIR/config/nginx/"*.conf; do
+        basename="$(basename "$f")"
+        case "$basename" in dev-*|prod-*) continue;; esac
+        cp "$f" /etc/nginx/sites-enabled/
+    done
+    nginx -t 2>/dev/null && systemctl reload nginx || echo "  (nginx config test failed, not reloaded)"
+    echo "==> Nginx synced ($CANYOUGRAB_ENV)"
+fi
 
 # --- Enable and restart services ---
 systemctl enable canyougrab-api canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3 canyougrab-watchdog.timer 2>/dev/null || true
@@ -67,14 +115,22 @@ systemctl restart canyougrab-api
 systemctl restart canyougrab-worker@1 canyougrab-worker@2 canyougrab-worker@3
 systemctl restart canyougrab-watchdog.timer
 
-# --- Verify ---
-sleep 5
-if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+# --- Verify (retry up to 30s — uvicorn needs time to fork workers) ---
+HEALTH_OK=false
+for i in $(seq 1 6); do
+    sleep 5
+    if curl -sf http://127.0.0.1:8000/health > /dev/null; then
+        HEALTH_OK=true
+        break
+    fi
+done
+
+if [ "$HEALTH_OK" = true ]; then
     echo "==> Health check passed"
 else
-    echo "==> WARNING: Health check failed!"
+    echo "==> WARNING: Health check failed after 30s (services may still be starting)"
     systemctl status canyougrab-api --no-pager | head -10
-    exit 1
+    # Don't exit 1 — let cloud-init continue so sentinel file gets created
 fi
 
 echo "==> Deploy complete: $(git log --oneline -1)"

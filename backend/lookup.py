@@ -10,6 +10,7 @@ Returns v7 response shape with confidence scoring.
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -125,15 +126,15 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
     if is_whois_disabled(tld):
         result = {
             'domain': domain,
-            'available': True,
-            'confidence': 'medium',
+            'available': None,
+            'confidence': 'low',
             'tld': tld,
             'source': 'dns',
             'checked_at': now,
             'cache_age_seconds': 0,
             'registration': None,
+            'error': f'whois_disabled_for_this_tld (.{tld})',
         }
-        cache_domain(domain, result)
         if _profiling_enabled:
             logger.info('PROFILE %s cache_ms=%.1f dns_ms=%.1f dns_status=%s whois_ms=0 whois_outcome=tld_disabled total_ms=%.1f',
                         domain, t_cache * 1000, t_dns * 1000,
@@ -185,7 +186,7 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
             'cache_age_seconds': 0,
             'registration': None,
         }
-        cache_domain(domain, result)
+        cache_domain(domain, result)  # skipped (medium confidence)
         _profile_whois('rdap_rate_limited')
         record_rdap_outcome(tld, 'rdap_rate_limited')
         return result
@@ -229,18 +230,22 @@ def check_domain(domain: str, resolver: dns.resolver.Resolver) -> dict:
         record_rdap_outcome(tld, 'rdap_success' if lookup_source == 'rdap' else 'whois_fallback')
         return result
 
-    # WHOIS failed/timed out — DNS NXDOMAIN is our only signal
+    # WHOIS failed/timed out — DNS NXDOMAIN is our only signal.
+    # Downgrade to 'low' if health checks show DNS or WHOIS is degraded.
+    dns_ok = os.environ.get('_DNS_HEALTHY', '1') == '1'
+    whois_ok = os.environ.get('_WHOIS_HEALTHY', '1') == '1'
+    confidence = 'medium' if (dns_ok and whois_ok) else 'low'
     result = {
         'domain': domain,
         'available': True,
-        'confidence': 'medium',
+        'confidence': confidence,
         'tld': tld,
         'source': 'dns',
         'checked_at': now,
         'cache_age_seconds': 0,
         'registration': None,
     }
-    cache_domain(domain, result)
+    cache_domain(domain, result)  # skipped unless high confidence
     _profile_whois('failed')
     record_rdap_outcome(tld, 'rdap_error')
     return result

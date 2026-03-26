@@ -133,7 +133,16 @@ def cache_domain(domain: str, data: dict) -> None:
 
     Expects v7-shaped data with 'available', 'confidence', 'source',
     'checked_at', and optionally 'registration' dict and 'error'.
+
+    Only caches high-confidence results. Medium/low confidence means
+    the pipeline couldn't fully verify (e.g., WHOIS was down, DNS
+    was degraded) — these are returned to the user but never persisted.
     """
+    confidence = data.get('confidence', 'medium')
+    if confidence != 'high':
+        logger.debug('Skipping cache for %s (confidence=%s)', domain, confidence)
+        return
+
     available = data.get('available')
 
     # Extract expires_at for TTL computation

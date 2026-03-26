@@ -30,6 +30,7 @@ from oauth import router as oauth_router
 from session import router as session_router
 from portal import router as portal_router
 from link_accounts import router as link_accounts_router
+from health import router as health_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ app.include_router(oauth_router)
 app.include_router(session_router)
 app.include_router(portal_router)
 app.include_router(link_accounts_router)
+app.include_router(health_router)
 
 
 def _request_origin(request: Request) -> str:

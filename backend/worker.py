@@ -7,6 +7,8 @@ automatic retries, failed-job tracking, and graceful shutdown.
 
 import os
 import sys
+import time
+import threading
 import logging
 
 # Ensure the backend directory is on sys.path so RQ can import rq_tasks
@@ -28,6 +30,53 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BATCH_CONCURRENCY = int(os.environ.get('BATCH_CONCURRENCY', '10'))
+HEALTH_CHECK_INTERVAL = int(os.environ.get('HEALTH_CHECK_INTERVAL', '60'))
+
+
+def start_health_checker(resolver):
+    """Background thread that periodically checks DNS and WHOIS health.
+
+    Sets environment flags that lookup.py reads to decide confidence levels.
+    When a service is unhealthy, results are still returned to users but
+    domain_cache.py refuses to cache anything below high confidence.
+    """
+    def _check():
+        while True:
+            time.sleep(HEALTH_CHECK_INTERVAL)
+
+            # DNS health
+            try:
+                resolver.resolve('google.com', 'NS')
+                if os.environ.get('_DNS_HEALTHY') == '0':
+                    logger.info('DNS health restored')
+                os.environ['_DNS_HEALTHY'] = '1'
+            except Exception:
+                if os.environ.get('_DNS_HEALTHY') != '0':
+                    logger.warning('DNS health check FAILED — medium/low confidence results will not be cached')
+                os.environ['_DNS_HEALTHY'] = '0'
+
+            # WHOIS health
+            try:
+                import httpx
+                resp = httpx.get(f'http://{WHOIS_HOSTNAME}:{WHOIS_PORT}/health', timeout=5)
+                if resp.status_code == 200:
+                    if os.environ.get('_WHOIS_HEALTHY') == '0':
+                        logger.info('WHOIS health restored')
+                    os.environ['_WHOIS_HEALTHY'] = '1'
+                else:
+                    raise Exception(f'HTTP {resp.status_code}')
+            except Exception:
+                if os.environ.get('_WHOIS_HEALTHY') != '0':
+                    logger.warning('WHOIS health check FAILED — WHOIS verification unavailable')
+                os.environ['_WHOIS_HEALTHY'] = '0'
+
+    # Initialize as healthy
+    os.environ['_DNS_HEALTHY'] = '1'
+    os.environ['_WHOIS_HEALTHY'] = '1'
+
+    thread = threading.Thread(target=_check, daemon=True)
+    thread.start()
+    logger.info('Background health checker started (interval=%ds)', HEALTH_CHECK_INTERVAL)
 
 
 def recover_stale_jobs():
@@ -83,6 +132,9 @@ def main():
     registry = _get_registry()
     disabled = sum(1 for v in registry.values() if v['whois_disabled'])
     logger.info('TLD registry loaded: %d TLDs (%d with WHOIS disabled)', len(registry), disabled)
+
+    # Start background health checker for DNS + WHOIS
+    start_health_checker(resolver)
 
     # Recover any stale jobs from previous crash
     recover_stale_jobs()
