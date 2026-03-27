@@ -153,6 +153,7 @@ async def do_bulk_check(
     plan: str,
     domains: list[str],
     verbose: bool = False,
+    enrichment: bool = False,
 ):
     """Shared bulk-check logic: rate limit, quota, enqueue job, long-poll for results.
 
@@ -215,6 +216,12 @@ async def do_bulk_check(
             continue
         if job['status'] == 'completed':
             results = get_job_results(job_id)
+            if enrichment:
+                import asyncio
+                from enrichment import enrich_results_bulk
+                results = await asyncio.get_event_loop().run_in_executor(
+                    None, enrich_results_bulk, results
+                )
             response = {'results': results}
             if verbose:
                 response['job_id'] = job_id
@@ -239,13 +246,14 @@ async def api_check_bulk(
     body: dict = Body(...),
     user: APIKeyUser = Depends(domains_read_auth),
     verbose: bool = Query(False, description='Include internal timing and debug fields'),
+    enrichment: bool = Query(False, alias='enrichment', description='Return enriched dns/whois/intelligence sections'),
 ):
     """Check availability of up to 100 domains. Holds connection open until results are ready."""
     domains = body.get('domains', [])
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'error': 'Provide a domains array'}, status_code=400)
 
-    return await do_bulk_check(user.consumer_id, user.plan, domains, verbose)
+    return await do_bulk_check(user.consumer_id, user.plan, domains, verbose, enrichment)
 
 
 # ── Other API routes ──────────────────────────────────────────────
