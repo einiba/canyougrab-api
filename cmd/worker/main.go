@@ -35,14 +35,21 @@ const (
 )
 
 var (
-	valkeyURL      = getenv("VALKEY_URL", "redis://valkey.canyougrab.svc.cluster.local:6379")
-	queueName      = getenv("VALKEY_QUEUE_NAME", "queue:rdap:prod")
-	dnsHost        = getenv("DNS_RESOLVER_HOSTNAME", "unbound.canyougrab.svc.cluster.local")
-	dnsPort        = getenv("DNS_RESOLVER_PORT", "53")
-	whoisHost      = getenv("WHOIS_HOSTNAME", "rust-whois-rdap.canyougrab.svc.cluster.local")
-	whoisPort      = getenv("WHOIS_PORT", "3000")
-	concurrency    = envInt("BATCH_CONCURRENCY", maxConcurrency)
+	queueName   = getenv("VALKEY_QUEUE_NAME", "queue:rdap:prod")
+	dnsHost     = getenv("DNS_RESOLVER_HOSTNAME", "unbound.canyougrab.svc.cluster.local")
+	dnsPort     = getenv("DNS_RESOLVER_PORT", "53")
+	whoisHost   = getenv("WHOIS_HOSTNAME", "rust-whois-rdap.canyougrab.svc.cluster.local")
+	whoisPort   = getenv("WHOIS_PORT", "3000")
+	concurrency = envInt("BATCH_CONCURRENCY", maxConcurrency)
 )
+
+func buildValkeyURL() string {
+	host := getenv("VALKEY_HOST", "localhost")
+	port := getenv("VALKEY_PORT", "25061")
+	user := getenv("VALKEY_USERNAME", "default")
+	pw   := os.Getenv("VALKEY_PASSWORD")
+	return fmt.Sprintf("rediss://%s:%s@%s:%s", user, pw, host, port)
+}
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -67,9 +74,9 @@ func envInt(key string, fallback int) int {
 // ── Valkey client ─────────────────────────────────────────────────────────
 
 func newValkeyClient() *redis.Client {
-	opts, err := redis.ParseURL(valkeyURL)
+	opts, err := redis.ParseURL(buildValkeyURL())
 	if err != nil {
-		log.Fatalf("invalid VALKEY_URL: %v", err)
+		log.Fatalf("invalid valkey URL: %v", err)
 	}
 	return redis.NewClient(opts)
 }
@@ -274,7 +281,6 @@ func checkDNS(domain, tld string) map[string]interface{} {
 // ── WHOIS lookup ──────────────────────────────────────────────────────────
 
 var whoisHTTP = &http.Client{Timeout: whoisTimeout}
-var whoisBase = fmt.Sprintf("http://%s:%s", whoisHost, whoisPort)
 
 type whoisResponse struct {
 	ParsedData  map[string]interface{} `json:"parsed_data"`
@@ -284,7 +290,7 @@ type whoisResponse struct {
 }
 
 func checkWHOIS(domain string) map[string]interface{} {
-	url := whoisBase + "/whois/" + domain
+	url := fmt.Sprintf("http://%s:%s/whois/%s", whoisHost, whoisPort, domain)
 	resp, err := whoisHTTP.Get(url)
 	if err != nil {
 		return nil
