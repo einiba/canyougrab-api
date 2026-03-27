@@ -205,7 +205,7 @@ async def check_domains(domains: list[str]) -> object:
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
-            f"{_get_public_api_base()}/api/check/bulk",
+            f"{_get_public_api_base()}/api/check/bulk?enrichment=true",
             json={"domains": domains},
             headers={
                 "Authorization": f"Bearer {api_key}",
