@@ -216,21 +216,77 @@ def enrich_result(result: dict, nameservers: list[str] | None = None) -> dict:
 
 
 def enrich_results_bulk(results: list[dict]) -> list[dict]:
-    """Enrich a list of results, fetching NS records in parallel for registered domains."""
+    """Enrich a list of results, fetching NS records in parallel for registered domains.
+
+    For registered domains:
+    - Checks zone_ns_snapshots (migration 010) before live DNS to skip redundant lookups.
+    - Falls back to live DNS for domains not in the snapshot table.
+    - Writes new live NS results back to zone_ns_snapshots (background thread).
+    - Fills in missing registration data from domain_whois_enrichment (migration 009)
+      for cache/bloom hits that have no registration dict.
+    - Writes fresh registration data to domain_whois_enrichment (background thread).
+    """
+    from queries import (
+        get_whois_enrichment_bulk, upsert_whois_enrichment,
+        get_ns_snapshots_bulk, upsert_ns_snapshots_bulk,
+    )
+
     registered = [r for r in results if r.get('available') is False
                   and r.get('source') != 'zone_bloom']  # bloom hits skip NS lookup
 
-    # Parallel NS lookups (max 20 concurrent)
+    # --- Migration 009: fill missing registration data from Postgres cache ---
+    needs_whois = [r for r in registered if not r.get('registration')]
+    if needs_whois:
+        cached_whois = get_whois_enrichment_bulk([r['domain'] for r in needs_whois])
+        for r in needs_whois:
+            if r['domain'] in cached_whois:
+                r = r.copy()  # don't mutate caller's list
+                r['registration'] = cached_whois[r['domain']]
+
+    # Write fresh registration data to Postgres in background
+    has_registration = [r for r in registered
+                        if r.get('registration') and r.get('source') in ('rdap', 'whois')]
+    if has_registration:
+        def _write_whois():
+            for r in has_registration:
+                parts = r['domain'].rsplit('.', 1)
+                tld = parts[1] if len(parts) == 2 else ''
+                upsert_whois_enrichment(r['domain'], tld, r.get('source', ''), r['registration'])
+        concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(_write_whois)
+
+    # --- Migration 010: NS snapshots ---
     ns_map: dict[str, list[str]] = {}
+
+    # Check Postgres snapshot cache first
     if registered:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(20, len(registered))) as pool:
-            futures = {pool.submit(_lookup_ns_sync, r['domain']): r['domain'] for r in registered}
+        registered_domains = [r['domain'] for r in registered]
+        cached_ns = get_ns_snapshots_bulk(registered_domains)
+        ns_map.update(cached_ns)
+
+    # Live DNS only for domains missing from the snapshot cache
+    needs_live_dns = [r for r in registered if r['domain'] not in ns_map]
+    if needs_live_dns:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(20, len(needs_live_dns))) as pool:
+            futures = {pool.submit(_lookup_ns_sync, r['domain']): r['domain'] for r in needs_live_dns}
             for fut in concurrent.futures.as_completed(futures, timeout=DNS_TIMEOUT + 1):
                 domain = futures[fut]
                 try:
                     ns_map[domain] = fut.result()
                 except Exception:
                     ns_map[domain] = []
+
+        # Write fresh live NS results to Postgres in background
+        new_entries = []
+        for r in needs_live_dns:
+            ns = ns_map.get(r['domain'])
+            if ns:
+                parts = r['domain'].rsplit('.', 1)
+                if len(parts) == 2:
+                    new_entries.append((parts[0], parts[1], ns))
+        if new_entries:
+            concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+                upsert_ns_snapshots_bulk, new_entries
+            )
 
     enriched = []
     for r in results:
