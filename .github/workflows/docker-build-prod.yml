@@ -34,7 +34,9 @@ jobs:
       - name: Build and push API image
         run: |
           SHA=$(git rev-parse --short HEAD)
+          docker pull $REGISTRY/api:prod-latest || true
           docker build \
+            --cache-from $REGISTRY/api:prod-latest \
             -t $REGISTRY/api:prod-$SHA \
             -t $REGISTRY/api:prod-latest \
             .
@@ -58,7 +60,9 @@ jobs:
       - name: Build and push portal image
         run: |
           SHA=$(git rev-parse --short HEAD)
+          docker pull $REGISTRY/portal:prod-latest || true
           docker build \
+            --cache-from $REGISTRY/portal:prod-latest \
             -f portal/Dockerfile \
             -t $REGISTRY/portal:prod-$SHA \
             -t $REGISTRY/portal:prod-latest \
