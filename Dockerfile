@@ -6,7 +6,8 @@ FROM golang:1.22-alpine AS go-builder
 WORKDIR /build
 COPY go.mod ./
 COPY cmd/ ./cmd/
-RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/
+RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/ && \
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker ./cmd/worker/
 
 # ── Stage 2: Python runtime ──────────────────────────────────────────────────
 FROM python:3.12-slim AS base
@@ -27,8 +28,9 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY backend/ /app/
 COPY scripts/ /app/scripts/
 
-# Copy compiled Go bloom-builder binary
+# Copy compiled Go binaries
 COPY --from=go-builder /bloom-builder /app/bloom-builder
+COPY --from=go-builder /worker /app/worker
 
 EXPOSE 8000 8001
 

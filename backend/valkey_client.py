@@ -178,20 +178,12 @@ def create_split_job(job_id: str, consumer: str, domains: list[str]) -> dict:
     pipe.expire(whois_key, JOB_TTL)
     pipe.execute()
 
-    # Enqueue sub-jobs to their respective queues
+    # Enqueue sub-jobs directly — Go workers BLPOP from these lists.
     try:
         rdap_q = get_rdap_queue()
-        rdap_q.enqueue(
-            'rq_tasks.process_domain_job', rdap_key,
-            job_timeout=120, result_ttl=0, failure_ttl=JOB_TTL,
-            retry=Retry(max=2, interval=[5, 30]),
-        )
+        r.rpush(rdap_q.name, rdap_key)
         whois_q = get_whois_queue()
-        whois_q.enqueue(
-            'rq_tasks.process_domain_job', whois_key,
-            job_timeout=120, result_ttl=0, failure_ttl=JOB_TTL,
-            retry=Retry(max=2, interval=[5, 30]),
-        )
+        r.rpush(whois_q.name, whois_key)
     except Exception:
         r.delete(parent_key, rdap_key, whois_key)
         raise
@@ -227,11 +219,8 @@ def _create_single_queue_job(job_id: str, consumer: str, domains: list[str], que
     pipe.execute()
 
     try:
-        queue.enqueue(
-            'rq_tasks.process_domain_job', job_key,
-            job_timeout=120, result_ttl=0, failure_ttl=JOB_TTL,
-            retry=Retry(max=2, interval=[5, 30]),
-        )
+        # Push job key directly — Go worker BLPOPs from this list.
+        r.rpush(queue.name, job_key)
     except Exception:
         r.delete(job_key)
         raise
