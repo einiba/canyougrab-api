@@ -51,6 +51,17 @@ MCP_SERVER_METADATA_PATH = _resolve_repo_file('mcp-server', 'server.json')
 
 app = FastAPI(title='CanYouGrab API', version='7.0.0')
 
+
+@app.on_event('startup')
+def _startup():
+    """Populate Valkey sets used by Go workers at startup."""
+    try:
+        from tld_registry import populate_covered_tlds_set
+        populate_covered_tlds_set()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning('Failed to populate covered TLDs: %s', e)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],

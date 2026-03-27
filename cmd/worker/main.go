@@ -332,6 +332,22 @@ func checkWHOIS(domain string) map[string]interface{} {
 	}
 }
 
+// ── TOS coverage check ───────────────────────────────────────────────────
+
+const tosCoveredKey = "tos:covered_tlds"
+
+// isTLDCovered returns true if the TLD's registry operator is listed in
+// our Terms of Service.  Only covered TLDs may receive RDAP/WHOIS queries;
+// uncovered TLDs get DNS-only results.
+func isTLDCovered(ctx context.Context, rdb *redis.Client, tld string) bool {
+	ok, err := rdb.SIsMember(ctx, tosCoveredKey, tld).Result()
+	if err != nil {
+		// Valkey error — fail open (allow WHOIS) to avoid breaking lookups
+		return true
+	}
+	return ok
+}
+
 // ── Domain pipeline ───────────────────────────────────────────────────────
 
 func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[string]interface{} {
@@ -378,7 +394,13 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 		return dnsResult
 	}
 
-	// 4. WHOIS — DNS says NXDOMAIN, verify with WHOIS/RDAP
+	// 4. TOS coverage gate — only query RDAP/WHOIS for operators listed in our TOS
+	if !isTLDCovered(ctx, rdb, tld) {
+		// Return DNS result as-is (medium confidence, no WHOIS verification)
+		return dnsResult
+	}
+
+	// 5. WHOIS — DNS says NXDOMAIN, verify with WHOIS/RDAP
 	whoisData := checkWHOIS(domain)
 	if whoisData == nil {
 		// WHOIS unavailable — return DNS result with medium confidence
