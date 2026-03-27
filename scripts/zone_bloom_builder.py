@@ -81,19 +81,20 @@ def download_zone_file(tld: str, token: str, output_dir: str) -> str:
 
 
 def extract_slds_from_zone(zone_path: str, tld: str):
-    """Stream-parse a zone file and yield unique SLDs.
+    """Stream-parse a zone file and yield SLDs (with duplicates).
 
     Zone file format (simplified):
         google.com.  NS  ns1.google.com.
         amazon.com.  NS  ns1.amazon.com.
 
-    We extract the first column (domain), strip the TLD, and deduplicate.
+    We extract the first column (domain) and strip the TLD. No deduplication
+    here — bloom filters are idempotent (setting a bit twice is a no-op), so
+    we save ~10GB RAM that a Python set of 179M strings would require.
     """
-    seen = set()
     suffix = f".{tld}."
     suffix_len = len(suffix)
 
-    # Use subprocess zcat for 10x faster decompression than Python gzip
+    # Use subprocess gzip for ~10x faster decompression than Python gzip
     if zone_path.endswith('.gz'):
         import subprocess
         proc = subprocess.Popen(
@@ -107,7 +108,7 @@ def extract_slds_from_zone(zone_path: str, tld: str):
         f = open(zone_path, 'r', encoding='ascii', errors='ignore')
 
     try:
-      for line in f:
+        for line in f:
             # Skip comments and empty lines
             if not line or line[0] in (';', '$', '\n', ' ', '\t'):
                 continue
@@ -128,15 +129,11 @@ def extract_slds_from_zone(zone_path: str, tld: str):
             if '.' in sld:
                 continue
 
-            if sld not in seen:
-                seen.add(sld)
-                yield sld
+            yield sld
     finally:
-      f.close()
-      if proc:
-          proc.wait()
-
-    logger.info('.%s: extracted %d unique SLDs', tld, len(seen))
+        f.close()
+        if proc:
+            proc.wait()
 
 
 def get_valkey():
