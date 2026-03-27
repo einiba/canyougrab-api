@@ -1,5 +1,14 @@
 # Multi-purpose image: API server, MCP server, and RQ workers.
 # Override CMD per workload in K8s deployment spec.
+
+# ── Stage 1: Build Go bloom-builder binary ──────────────────────────────────
+FROM golang:1.22-alpine AS go-builder
+WORKDIR /build
+COPY go.mod ./
+COPY cmd/ ./cmd/
+RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/
+
+# ── Stage 2: Python runtime ──────────────────────────────────────────────────
 FROM python:3.12-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,6 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 # Copy application code + scripts
 COPY backend/ /app/
 COPY scripts/ /app/scripts/
+
+# Copy compiled Go bloom-builder binary
+COPY --from=go-builder /bloom-builder /app/bloom-builder
 
 EXPOSE 8000 8001
 

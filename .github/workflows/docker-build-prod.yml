@@ -9,6 +9,8 @@ on:
       - 'portal/**'
       - 'shared/**'
       - 'scripts/**'
+      - 'cmd/**'
+      - 'go.mod'
       - 'Dockerfile'
       - 'portal/Dockerfile'
       - '.github/workflows/docker-build-prod.yml'
