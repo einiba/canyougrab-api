@@ -1,35 +1,27 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { useSignRequest } from "@/hooks/useSignRequest";
 import { API_BASE } from "@/config";
-
-const CURRENT_TOS_VERSION = "1.0";
 
 interface TosGateProps {
   children: ReactNode;
   tosAcceptedAt: string | null;
   tosVersion: string | null;
+  currentTosVersion: string;
   onAccepted: () => void;
 }
 
-export function TosGate({ children, tosAcceptedAt, tosVersion, onAccepted }: TosGateProps) {
+export function TosGate({ children, tosAcceptedAt, tosVersion, currentTosVersion, onAccepted }: TosGateProps) {
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { signRequest } = useSignRequest();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [scrolledToBottom, setScrolledToBottom] = useState(false);
 
-  // If TOS already accepted at current version, render children
-  if (tosAcceptedAt && tosVersion === CURRENT_TOS_VERSION) {
+  // TOS accepted at current version — let through
+  if (tosAcceptedAt && tosVersion === currentTosVersion) {
     return <>{children}</>;
   }
 
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    if (atBottom) setScrolledToBottom(true);
-  }, []);
+  const isUpdate = !!tosAcceptedAt && tosVersion !== currentTosVersion;
 
   const handleAccept = async () => {
     setAccepting(true);
@@ -54,19 +46,17 @@ export function TosGate({ children, tosAcceptedAt, tosVersion, onAccepted }: Tos
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="bg-background border border-border rounded-xl shadow-2xl max-w-lg w-full mx-4 flex flex-col max-h-[90vh]">
         <div className="px-6 pt-6 pb-4">
-          <h2 className="text-lg font-semibold text-foreground">Terms of Service</h2>
+          <h2 className="text-lg font-semibold text-foreground">
+            {isUpdate ? "Updated Terms of Service" : "Terms of Service"}
+          </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {tosVersion && tosVersion !== CURRENT_TOS_VERSION
-              ? "Our Terms of Service have been updated. Please review and accept the new terms to continue."
+            {isUpdate
+              ? `Our Terms of Service have been updated to version ${currentTosVersion}. Please review and accept the new terms to continue using CanYouGrab.`
               : "Please review and accept our Terms of Service to continue using CanYouGrab."}
           </p>
         </div>
 
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="px-6 overflow-y-auto flex-1 border-t border-b border-border"
-        >
+        <div className="px-6 overflow-y-auto flex-1 border-t border-b border-border">
           <div className="py-4 text-sm text-muted-foreground space-y-3 leading-relaxed">
             <p>By accepting, you agree to:</p>
             <ul className="list-disc pl-5 space-y-2">
@@ -117,10 +107,14 @@ export function TosGate({ children, tosAcceptedAt, tosVersion, onAccepted }: Tos
             disabled={accepting}
             className="w-full py-2.5 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {accepting ? "Accepting..." : "I have read and agree to the Terms of Service"}
+            {accepting
+              ? "Accepting..."
+              : isUpdate
+                ? `I accept the updated Terms of Service (v${currentTosVersion})`
+                : "I have read and agree to the Terms of Service"}
           </button>
           <p className="text-xs text-muted-foreground text-center">
-            Version {CURRENT_TOS_VERSION}
+            Version {currentTosVersion}
           </p>
         </div>
       </div>

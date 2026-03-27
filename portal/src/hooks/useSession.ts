@@ -6,6 +6,7 @@ import { API_BASE } from "@/config";
 export interface SessionData {
   tos_accepted_at: string | null;
   tos_version: string | null;
+  current_tos_version: string;
 }
 
 /**
@@ -31,6 +32,7 @@ export function useSession() {
         setSession({
           tos_accepted_at: data.tos_accepted_at ?? null,
           tos_version: data.tos_version ?? null,
+          current_tos_version: data.current_tos_version ?? "1.0",
         });
       }
     } catch {

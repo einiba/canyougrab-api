@@ -162,6 +162,16 @@ export function TermsPage() {
             Terms of Service.
           </p>
 
+          <h3 className="font-medium text-foreground pt-2">Changes to These Terms</h3>
+          <p>
+            We may update these Terms of Service at any time by posting a revised version
+            on this page with a new version number and effective date. When we make
+            material changes, we will require you to review and accept the updated terms
+            before continuing to use the Service. Your continued use of the Service after
+            accepting updated terms constitutes your agreement to the revised terms. If
+            you do not agree to the updated terms, you must stop using the Service.
+          </p>
+
           <h3 className="font-medium text-foreground pt-2">Acceptable Use</h3>
           <ul className="list-disc pl-5 space-y-1">
             <li>

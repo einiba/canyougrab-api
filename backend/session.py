@@ -8,7 +8,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends, Request
 
-from auth import AUTH0_DOMAIN, JWTUser, jwt_auth
+from auth import AUTH0_DOMAIN, CURRENT_TOS_VERSION, JWTUser, jwt_auth
 from plans import get_plan
 from queries import get_db_conn
 from users import upsert_user, get_user, merge_user_data
@@ -104,13 +104,13 @@ async def create_session(request: Request, user: JWTUser = Depends(jwt_auth)):
         'created_at': db_user['created_at'] if db_user else None,
         'tos_accepted_at': db_user.get('tos_accepted_at') if db_user else None,
         'tos_version': db_user.get('tos_version') if db_user else None,
+        'current_tos_version': CURRENT_TOS_VERSION,
     }
 
 
 @router.post('/api/auth/accept-tos')
 async def accept_tos(user: JWTUser = Depends(jwt_auth)):
     """Record that the user has accepted the current Terms of Service."""
-    TOS_VERSION = '1.0'
 
     conn = get_db_conn()
     try:
@@ -120,7 +120,7 @@ async def accept_tos(user: JWTUser = Depends(jwt_auth)):
                 SET tos_accepted_at = NOW(), tos_version = %s, updated_at = NOW()
                 WHERE auth0_sub = %s
                 RETURNING tos_accepted_at, tos_version
-            """, (TOS_VERSION, user.sub))
+            """, (CURRENT_TOS_VERSION, user.sub))
             row = cur.fetchone()
             conn.commit()
 

@@ -125,18 +125,29 @@ def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str
     tos_accepted_at = row[5]
     tos_version = row[6]
     if tos_accepted_at is None or tos_version != CURRENT_TOS_VERSION:
+        is_update = tos_accepted_at is not None and tos_version != CURRENT_TOS_VERSION
+        if is_update:
+            msg = (
+                f'Our Terms of Service have been updated to version {CURRENT_TOS_VERSION} '
+                f'(you accepted version {tos_version}). '
+                'Please sign in at https://portal.canyougrab.it to review and accept '
+                'the updated terms before continuing to use the API.'
+            )
+        else:
+            msg = (
+                'You must accept the Terms of Service before using the API. '
+                'Please visit https://portal.canyougrab.it/terms to review the terms, '
+                'then sign in at https://portal.canyougrab.it to accept them.'
+            )
         raise HTTPException(
             status_code=403,
             detail={
                 'error': 'terms_not_accepted',
-                'message': (
-                    'You must accept the Terms of Service before using the API. '
-                    'Please visit https://portal.canyougrab.it/terms to review the terms, '
-                    'then sign in at https://portal.canyougrab.it to accept them.'
-                ),
+                'message': msg,
                 'terms_url': 'https://portal.canyougrab.it/terms',
                 'portal_url': 'https://portal.canyougrab.it',
                 'required_version': CURRENT_TOS_VERSION,
+                'accepted_version': tos_version,
             },
         )
 

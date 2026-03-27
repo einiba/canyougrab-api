@@ -39,6 +39,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     <TosGate
       tosAcceptedAt={session?.tos_accepted_at ?? null}
       tosVersion={session?.tos_version ?? null}
+      currentTosVersion={session?.current_tos_version ?? "1.0"}
       onAccepted={refreshSession}
     >
       {children}
