@@ -342,8 +342,11 @@ const tosCoveredKey = "tos:covered_tlds"
 func isTLDCovered(ctx context.Context, rdb *redis.Client, tld string) bool {
 	ok, err := rdb.SIsMember(ctx, tosCoveredKey, tld).Result()
 	if err != nil {
-		// Valkey error — fail open (allow WHOIS) to avoid breaking lookups
+		log.Printf("TOS coverage check error for .%s: %v (failing open)", tld, err)
 		return true
+	}
+	if !ok {
+		log.Printf("TOS gate: .%s not covered — skipping RDAP/WHOIS", tld)
 	}
 	return ok
 }
