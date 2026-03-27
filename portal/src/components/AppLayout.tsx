@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
-import { useSession } from "@/hooks/useSession";
+import { SessionProvider } from "@/hooks/SessionContext";
 import { Button } from "@/components/Button";
 import { UserProfileDropdown } from "@/components/UserProfileDropdown";
 
@@ -12,11 +12,8 @@ const navLinks = [
   { to: "/docs", label: "API Reference", auth: false },
 ];
 
-export function AppLayout() {
+function AppLayoutInner() {
   const { isAuthenticated, isPending, profile, login, logout } = useAuth();
-
-  // Upsert user record on login
-  useSession();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -60,6 +57,22 @@ export function AppLayout() {
       <main className="flex-1 max-w-6xl mx-auto px-4 py-8 w-full">
         <Outlet />
       </main>
+      <footer className="border-t border-border py-4">
+        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between text-xs text-muted-foreground">
+          <span>&copy; {new Date().getFullYear()} CanYouGrab</span>
+          <NavLink to="/terms" className="hover:text-foreground transition-colors">
+            Terms of Service
+          </NavLink>
+        </div>
+      </footer>
     </div>
+  );
+}
+
+export function AppLayout() {
+  return (
+    <SessionProvider>
+      <AppLayoutInner />
+    </SessionProvider>
   );
 }

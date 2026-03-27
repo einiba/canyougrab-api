@@ -102,4 +102,38 @@ async def create_session(request: Request, user: JWTUser = Depends(jwt_auth)):
         'plan': plan,
         'monthly_limit': plan_info['monthly_limit'],
         'created_at': db_user['created_at'] if db_user else None,
+        'tos_accepted_at': db_user.get('tos_accepted_at') if db_user else None,
+        'tos_version': db_user.get('tos_version') if db_user else None,
     }
+
+
+@router.post('/api/auth/accept-tos')
+async def accept_tos(user: JWTUser = Depends(jwt_auth)):
+    """Record that the user has accepted the current Terms of Service."""
+    TOS_VERSION = '1.0'
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET tos_accepted_at = NOW(), tos_version = %s, updated_at = NOW()
+                WHERE auth0_sub = %s
+                RETURNING tos_accepted_at, tos_version
+            """, (TOS_VERSION, user.sub))
+            row = cur.fetchone()
+            conn.commit()
+
+        if not row:
+            return {'error': 'User not found'}, 404
+
+        return {
+            'tos_accepted_at': row[0].isoformat() if row[0] else None,
+            'tos_version': row[1],
+        }
+    except Exception as e:
+        logger.error('Failed to accept TOS for %s: %s', user.sub, e)
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

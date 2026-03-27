@@ -8,6 +8,7 @@ import { CardSetupPage } from "@/pages/CardSetupPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { DocsPage } from "@/pages/DocsPage";
 import { InteractivePage } from "@/pages/InteractivePage";
+import { TermsPage } from "@/pages/TermsPage";
 
 export default function App() {
   const { isLoading, error: authError } = useAuth0();
@@ -81,6 +82,7 @@ export default function App() {
           }
         />
         <Route path="docs" element={<DocsPage />} />
+        <Route path="terms" element={<TermsPage />} />
       </Route>
     </Routes>
   );

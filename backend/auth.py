@@ -95,6 +95,9 @@ class APIKeyUser:
         self.auth_type = auth_type
 
 
+CURRENT_TOS_VERSION = '1.0'
+
+
 def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str) -> APIKeyUser:
     key_hash = _hash_key(raw_key)
 
@@ -102,9 +105,11 @@ def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, user_sub, plan, email, disabled_at
-                FROM api_keys
-                WHERE key_hash = %s AND revoked_at IS NULL
+                SELECT k.id, k.user_sub, k.plan, k.email, k.disabled_at,
+                       u.tos_accepted_at, u.tos_version
+                FROM api_keys k
+                LEFT JOIN users u ON u.auth0_sub = k.user_sub
+                WHERE k.key_hash = %s AND k.revoked_at IS NULL
             """, (key_hash,))
             row = cur.fetchone()
     finally:
@@ -115,6 +120,25 @@ def _lookup_api_key_user(raw_key: str, *, scopes: frozenset[str], auth_type: str
 
     if row[4] is not None:
         raise HTTPException(status_code=403, detail='API key is disabled')
+
+    # Check TOS acceptance
+    tos_accepted_at = row[5]
+    tos_version = row[6]
+    if tos_accepted_at is None or tos_version != CURRENT_TOS_VERSION:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                'error': 'terms_not_accepted',
+                'message': (
+                    'You must accept the Terms of Service before using the API. '
+                    'Please visit https://portal.canyougrab.it/terms to review the terms, '
+                    'then sign in at https://portal.canyougrab.it to accept them.'
+                ),
+                'terms_url': 'https://portal.canyougrab.it/terms',
+                'portal_url': 'https://portal.canyougrab.it',
+                'required_version': CURRENT_TOS_VERSION,
+            },
+        )
 
     return APIKeyUser(
         consumer_id=str(row[0]),

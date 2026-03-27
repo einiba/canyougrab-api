@@ -47,7 +47,8 @@ def upsert_user(
                     updated_at      = NOW(),
                     last_login_at   = NOW()
                 RETURNING id, auth0_sub, email, email_normalized, email_verified,
-                          name, picture_url, auth_provider, created_at, updated_at, last_login_at
+                          name, picture_url, auth_provider, created_at, updated_at, last_login_at,
+                          tos_accepted_at, tos_version
             """, (auth0_sub, email, email_norm, email_verified, name, picture_url, auth_provider))
             row = cur.fetchone()
             conn.commit()
@@ -72,6 +73,8 @@ def upsert_user(
             'created_at': row[8].isoformat() if row[8] else None,
             'updated_at': row[9].isoformat() if row[9] else None,
             'last_login_at': row[10].isoformat() if row[10] else None,
+            'tos_accepted_at': row[11].isoformat() if row[11] else None,
+            'tos_version': row[12],
         }
     except Exception as e:
         logger.error('Failed to upsert user %s: %s', auth0_sub, e)
@@ -91,7 +94,8 @@ def get_user(auth0_sub: str) -> Optional[dict]:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, auth0_sub, email, email_normalized, email_verified,
-                       name, picture_url, auth_provider, created_at, updated_at, last_login_at
+                       name, picture_url, auth_provider, created_at, updated_at, last_login_at,
+                       tos_accepted_at, tos_version
                 FROM users WHERE auth0_sub = %s
             """, (auth0_sub,))
             row = cur.fetchone()
@@ -111,6 +115,8 @@ def get_user(auth0_sub: str) -> Optional[dict]:
             'created_at': row[8].isoformat() if row[8] else None,
             'updated_at': row[9].isoformat() if row[9] else None,
             'last_login_at': row[10].isoformat() if row[10] else None,
+            'tos_accepted_at': row[11].isoformat() if row[11] else None,
+            'tos_version': row[12],
         }
     finally:
         conn.close()
