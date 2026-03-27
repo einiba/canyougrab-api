@@ -8,3 +8,4 @@ python-jose[cryptography]>=3.5
 pydantic>=2.12
 dnspython>=2.6
 prometheus_client>=0.22
+requests>=2.31
