@@ -8,6 +8,7 @@ on:
       - 'mcp-server/**'
       - 'portal/**'
       - 'shared/**'
+      - 'scripts/**'
       - 'Dockerfile'
       - 'portal/Dockerfile'
       - '.github/workflows/docker-build-prod.yml'
