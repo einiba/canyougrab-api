@@ -348,36 +348,6 @@
         "security": [{ "apiKey": [] }]
       }
     },
-    "/api/plans": {
-      "get": {
-        "summary": "List Available Plans",
-        "description": "Returns all published pricing plans with their limits and pricing. No authentication required.",
-        "operationId": "list-plans",
-        "responses": {
-          "200": {
-            "description": "List of available plans",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "name": { "type": "string" },
-                      "display_name": { "type": "string" },
-                      "price_cents": { "type": "integer" },
-                      "monthly_limit": { "type": "integer" },
-                      "minute_limit": { "type": "integer" },
-                      "domain_cap": { "type": "integer", "description": "Max domains per bulk check request" }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/health": {
       "get": {
         "summary": "Health Check",
