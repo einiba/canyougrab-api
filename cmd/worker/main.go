@@ -401,6 +401,19 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 		return dnsResult // fall back to medium-confidence DNS result
 	}
 
+	// Check expiration_date — only treat as registered if we have one.
+	// WHOIS returns HTTP 200 even for "no data found" responses; expiration_date
+	// is the reliable signal that a domain is actually registered (same logic as Python lookup.py).
+	if whoisData["expiration_date"] == nil {
+		result := map[string]interface{}{
+			"domain": domain, "available": true, "tld": tld,
+			"confidence": "high", "source": "whois",
+			"checked_at": now, "cache_age_seconds": 0, "registration": nil,
+		}
+		writeCacheResult(ctx, rdb, domain, result)
+		return result
+	}
+
 	// WHOIS found registration data
 	reg := map[string]interface{}{}
 	if v := whoisData["creation_date"]; v != nil {
