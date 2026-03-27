@@ -217,7 +217,6 @@ async def do_bulk_check(
         if job['status'] == 'completed':
             results = get_job_results(job_id)
             if enrichment:
-                import asyncio
                 from enrichment import enrich_results_bulk
                 results = await asyncio.get_event_loop().run_in_executor(
                     None, enrich_results_bulk, results
