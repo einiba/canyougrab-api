@@ -442,6 +442,133 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 	return result
 }
 
+// ── Sub-job merge (Lua) ──────────────────────────────────────────────────
+
+// completeSubJobLua atomically marks a sub-job completed and checks whether
+// all sibling sub-jobs are also done.  Returns 1 when the caller should
+// merge results into the parent job, 0 otherwise.
+var completeSubJobLua = redis.NewScript(`
+-- KEYS[1] = sub-job key
+-- KEYS[2] = parent job key
+-- ARGV[1] = results JSON
+-- ARGV[2] = completed_at
+-- ARGV[3] = queued_at   (may be empty)
+-- ARGV[4] = JOB_TTL
+
+-- Mark sub-job completed
+redis.call('HSET', KEYS[1], 'status', 'completed',
+           'results', ARGV[1], 'completed_at', ARGV[2])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+
+if ARGV[3] ~= '' then
+    redis.call('HSET', KEYS[1], 'queued_at', ARGV[3])
+end
+
+-- Check if all sub-jobs are done
+local sub_jobs_json = redis.call('HGET', KEYS[2], 'sub_jobs')
+if not sub_jobs_json then return 0 end
+
+local sub_jobs = cjson.decode(sub_jobs_json)
+for _, sj_key in ipairs(sub_jobs) do
+    local sj_status = redis.call('HGET', sj_key, 'status')
+    if sj_status ~= 'completed' then
+        return 0
+    end
+end
+
+return 1
+`)
+
+// isSubJob returns true when the key looks like "job:rdap:..." or "job:whois:...".
+func isSubJob(jobKey string) bool {
+	return strings.HasPrefix(jobKey, "job:rdap:") || strings.HasPrefix(jobKey, "job:whois:")
+}
+
+// mergeSubJobs reads all sibling sub-jobs and writes the combined result
+// array (in original order) into the parent job hash.
+func mergeSubJobs(ctx context.Context, rdb *redis.Client, parentKey, createdAt string) {
+	subJobsJSON, err := rdb.HGet(ctx, parentKey, "sub_jobs").Result()
+	if err != nil {
+		log.Printf("merge: no sub_jobs on %s: %v", parentKey, err)
+		return
+	}
+	var subJobKeys []string
+	if err := json.Unmarshal([]byte(subJobsJSON), &subJobKeys); err != nil {
+		log.Printf("merge: bad sub_jobs JSON on %s: %v", parentKey, err)
+		return
+	}
+
+	domainCountStr, _ := rdb.HGet(ctx, parentKey, "domain_count").Result()
+	var domainCount int
+	fmt.Sscan(domainCountStr, &domainCount)
+	if domainCount == 0 {
+		domainCount = 100 // safety fallback
+	}
+
+	merged := make([]interface{}, domainCount)
+	hasPartialError := false
+
+	for _, sjKey := range subJobKeys {
+		sjData, err := rdb.HGetAll(ctx, sjKey).Result()
+		if err != nil || sjData["status"] != "completed" {
+			hasPartialError = true
+			continue
+		}
+		var sjResults []json.RawMessage
+		if err := json.Unmarshal([]byte(sjData["results"]), &sjResults); err != nil {
+			hasPartialError = true
+			continue
+		}
+		var sjIndices []int
+		if err := json.Unmarshal([]byte(sjData["indices"]), &sjIndices); err != nil {
+			hasPartialError = true
+			continue
+		}
+		for i, idx := range sjIndices {
+			if idx >= 0 && idx < domainCount && i < len(sjResults) {
+				merged[idx] = sjResults[i]
+			}
+		}
+	}
+
+	// Fill gaps with error placeholders
+	for i := range merged {
+		if merged[i] == nil {
+			merged[i] = map[string]interface{}{
+				"domain": "unknown", "available": nil,
+				"confidence": "low", "error": "sub-job failed or timed out",
+				"source": "error",
+			}
+			hasPartialError = true
+		}
+	}
+
+	now := time.Now().UTC()
+	nowISO := now.Format(time.RFC3339Nano)
+	mergedJSON, _ := json.Marshal(merged)
+
+	mapping := map[string]interface{}{
+		"status":       "completed",
+		"results":      string(mergedJSON),
+		"completed_at": nowISO,
+	}
+	if hasPartialError {
+		mapping["partial"] = "true"
+	}
+	if createdAt != "" {
+		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			mapping["response_time_ms"] = int(now.Sub(t).Milliseconds())
+		}
+	}
+
+	pipe := rdb.Pipeline()
+	pipe.HSet(ctx, parentKey, mapping)
+	pipe.Expire(ctx, parentKey, jobTTL*time.Second)
+	pipe.Exec(ctx) //nolint
+
+	log.Printf("merged %d results into parent %s (partial=%v)", domainCount, parentKey, hasPartialError)
+}
+
 // ── Job processing ────────────────────────────────────────────────────────
 
 func processJob(ctx context.Context, rdb *redis.Client, jobKey string) error {
@@ -450,6 +577,7 @@ func processJob(ctx context.Context, rdb *redis.Client, jobKey string) error {
 	pipe.HSet(ctx, jobKey, "status", "processing")
 	domainsCmd := pipe.HGet(ctx, jobKey, "domains")
 	createdAtCmd := pipe.HGet(ctx, jobKey, "created_at")
+	parentJobCmd := pipe.HGet(ctx, jobKey, "parent_job")
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return fmt.Errorf("claim %s: %w", jobKey, err)
 	}
@@ -459,6 +587,7 @@ func processJob(ctx context.Context, rdb *redis.Client, jobKey string) error {
 		return fmt.Errorf("no domains for %s: %w", jobKey, err)
 	}
 	createdAt, _ := createdAtCmd.Result()
+	parentKey, _ := parentJobCmd.Result()
 
 	var domains []string
 	if err := json.Unmarshal([]byte(domainsJSON), &domains); err != nil {
@@ -487,6 +616,27 @@ func processJob(ctx context.Context, rdb *redis.Client, jobKey string) error {
 	nowISO := now.Format(time.RFC3339Nano)
 	resultsJSON, _ := json.Marshal(results)
 
+	// Sub-job: use Lua script for atomic completion + sibling check
+	if isSubJob(jobKey) && parentKey != "" {
+		allDone, err := completeSubJobLua.Run(ctx, rdb,
+			[]string{jobKey, parentKey},
+			string(resultsJSON), nowISO, createdAt, fmt.Sprintf("%d", jobTTL),
+		).Int()
+		if err != nil {
+			log.Printf("sub-job Lua error for %s: %v — falling back to direct write", jobKey, err)
+			// Fallback: write directly (merge won't trigger but at least sub-job is marked done)
+			rdb.HSet(ctx, jobKey, map[string]interface{}{
+				"status": "completed", "results": string(resultsJSON), "completed_at": nowISO,
+			})
+			rdb.Expire(ctx, jobKey, jobTTL*time.Second)
+		} else if allDone == 1 {
+			mergeSubJobs(ctx, rdb, parentKey, createdAt)
+		}
+		log.Printf("completed sub-job %s (%d results, all_done=%v)", jobKey, len(results), allDone == 1)
+		return nil
+	}
+
+	// Regular job (not a sub-job): write results directly
 	mapping := map[string]interface{}{
 		"status":     "completed",
 		"results":    string(resultsJSON),
