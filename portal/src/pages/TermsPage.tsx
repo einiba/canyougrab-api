@@ -11,6 +11,7 @@ interface OperatorSection {
 }
 
 const operators: OperatorSection[] = [
+  // ── Umbrella policy ──
   {
     name: "ICANN (Internet Corporation for Assigned Names and Numbers)",
     tlds: ["All generic TLDs (gTLDs)"],
@@ -19,41 +20,56 @@ const operators: OperatorSection[] = [
     restrictions:
       "Registration data must not be used for marketing purposes. Bulk redistribution is prohibited unless incorporated into a value-added product that does not permit extraction of a substantial portion of the underlying data.",
   },
+  // ── Major gTLD registries ──
   {
     name: "Verisign",
-    tlds: [".com", ".net"],
+    tlds: [".com", ".net", ".cc", ".name", "and 12 other gTLDs"],
     aupUrl:
       "https://www.verisign.com/en_US/domain-names/registration-data-access-protocol/terms-service/index.xhtml",
     restrictions:
       "High-volume automated queries are prohibited except when reasonably necessary to register domain names or modify existing registrations. Compilation, repackaging, dissemination, or other use of the data requires prior written consent from Verisign.",
   },
   {
+    name: "Identity Digital",
+    tlds: [".io", ".co", ".tv", ".academy", ".agency", ".app", "and 450+ other gTLDs"],
+    aupUrl: "https://identity.digital",
+    restrictions:
+      "The largest new gTLD registry operator. Data mining and systematic collection of registration data is prohibited. Standard ICANN acceptable use policy applies to all TLDs.",
+  },
+  {
     name: "Public Interest Registry (PIR)",
-    tlds: [".org"],
+    tlds: [".org", ".charity", ".foundation", ".gives", ".ngo", "and 6 other gTLDs"],
     aupUrl: "https://pir.org/our-domains/whois-look-up/",
     restrictions:
       "Query rate is limited to 10 queries per minute. Access to searchable WHOIS beyond basic lookups requires authorization with a demonstrated legitimate purpose.",
   },
   {
-    name: "Identity Digital",
-    tlds: [".io", ".co", ".cc", ".tv", "and 300+ new gTLDs"],
-    aupUrl: "https://identity.digital",
+    name: "CentralNic",
+    tlds: [".xyz", ".art", ".baby", ".best", ".bond", "and 85+ other gTLDs"],
+    aupUrl: "https://centralnic.com",
     restrictions:
-      "Data mining and systematic collection of registration data is prohibited. Standard ICANN acceptable use policy applies.",
+      "Standard ICANN acceptable use restrictions. Rate limiting enforced via HTTP 429 responses.",
   },
   {
     name: "Google Registry",
-    tlds: [".dev", ".app", ".page", ".new", ".google"],
+    tlds: [".dev", ".app", ".page", ".new", ".chrome", ".android", "and 40+ other gTLDs"],
     aupUrl: "https://about.google/products/",
     restrictions:
       "Standard ICANN restrictions apply. WHOIS is disabled for .app (RDAP only).",
   },
   {
-    name: "CentralNic",
-    tlds: [".xyz", ".online", ".site", ".store", ".fun"],
-    aupUrl: "https://centralnic.com",
+    name: "Nominet",
+    tlds: [".uk", ".co.uk", ".amazon", ".aws", ".bbc", "and 80+ other gTLDs"],
+    aupUrl: "https://www.nominet.uk",
     restrictions:
-      "Standard ICANN acceptable use restrictions. Rate limiting enforced via HTTP 429 responses.",
+      "UK data protection law applies. Automated bulk access requires a separate agreement with Nominet.",
+  },
+  {
+    name: "GMO Registry",
+    tlds: [".canon", ".fujitsu", ".bridgestone", ".toyota", "and 40+ other gTLDs"],
+    aupUrl: "https://www.gmoregistry.com",
+    restrictions:
+      "Standard ICANN acceptable use restrictions apply. Primarily brand TLDs with individual registry policies.",
   },
   {
     name: "GoDaddy Registry (formerly NeuStar)",
@@ -63,18 +79,33 @@ const operators: OperatorSection[] = [
       "High-volume automated electronic processes are prohibited. Unauthenticated access is limited to approximately 20 queries before IP-based blocking. Compilation or redistribution of a substantial portion of the database requires written permission.",
   },
   {
+    name: "ZDNS",
+    tlds: [".top", ".wang", ".ren", ".baidu", "and 18 other gTLDs"],
+    aupUrl: "https://www.zdns.cn",
+    restrictions:
+      "Chinese law applies. Standard ICANN acceptable use restrictions for gTLDs operated by ZDNS.",
+  },
+  {
+    name: "Tucows Registry",
+    tlds: [".click", ".link", ".gift", ".country", "and 9 other gTLDs"],
+    aupUrl: "https://tucowsregistry.com",
+    restrictions:
+      "Standard ICANN acceptable use restrictions. Rate limiting enforced.",
+  },
+  {
+    name: "Radix",
+    tlds: [".online", ".store", ".site", ".fun", ".host", ".space", ".press", ".pw"],
+    aupUrl: "https://radix.website",
+    restrictions:
+      "Standard ICANN acceptable use restrictions apply.",
+  },
+  // ── ccTLD operators ──
+  {
     name: "DENIC",
     tlds: [".de"],
     aupUrl: "https://www.denic.de",
     restrictions:
       "German law applies. Automated queries without an explicit agreement with DENIC are not permitted. Data use is restricted to purposes directly related to domain name registration.",
-  },
-  {
-    name: "Nominet",
-    tlds: [".uk", ".co.uk"],
-    aupUrl: "https://www.nominet.uk",
-    restrictions:
-      "UK data protection law applies. Automated bulk access requires a separate agreement with Nominet.",
   },
   {
     name: "CIRA (Canadian Internet Registration Authority)",
@@ -84,15 +115,8 @@ const operators: OperatorSection[] = [
       "Canadian privacy law applies. WHOIS data use is subject to CIRA's published acceptable use policy.",
   },
   {
-    name: "JPRS (Japan Registry Services)",
-    tlds: [".jp"],
-    aupUrl: "https://jprs.co.jp",
-    restrictions:
-      "Japanese law applies. Automated queries are subject to JPRS rate limits and acceptable use policy.",
-  },
-  {
     name: "AFNIC",
-    tlds: [".fr"],
+    tlds: [".fr", ".re", ".pm", ".wf", ".yt"],
     aupUrl: "https://www.afnic.fr",
     restrictions:
       "French and EU data protection law applies. WHOIS data use is subject to AFNIC's published terms.",
@@ -103,6 +127,76 @@ const operators: OperatorSection[] = [
     aupUrl: "https://www.auda.org.au",
     restrictions:
       "Australian privacy law applies. WHOIS data use is subject to auDA's published acceptable use policy.",
+  },
+  {
+    name: "JPRS (Japan Registry Services)",
+    tlds: [".jp"],
+    aupUrl: "https://jprs.co.jp",
+    restrictions:
+      "Japanese law applies. Automated queries are subject to JPRS rate limits and acceptable use policy.",
+  },
+  {
+    name: "SIDN",
+    tlds: [".nl"],
+    aupUrl: "https://www.sidn.nl",
+    restrictions:
+      "Dutch and EU data protection law applies. WHOIS data use is subject to SIDN's published terms.",
+  },
+  {
+    name: "Norid",
+    tlds: [".no"],
+    aupUrl: "https://www.norid.no",
+    restrictions:
+      "Norwegian law applies. WHOIS data use is subject to Norid's published acceptable use policy.",
+  },
+  {
+    name: "NASK",
+    tlds: [".pl"],
+    aupUrl: "https://www.dns.pl",
+    restrictions:
+      "Polish and EU data protection law applies. WHOIS data use is subject to NASK's published terms.",
+  },
+  {
+    name: "Traficom",
+    tlds: [".fi"],
+    aupUrl: "https://www.traficom.fi",
+    restrictions:
+      "Finnish and EU data protection law applies. WHOIS data use is subject to Traficom's published terms.",
+  },
+  {
+    name: "CZ.NIC",
+    tlds: [".cz"],
+    aupUrl: "https://www.nic.cz",
+    restrictions:
+      "Czech and EU data protection law applies. WHOIS data use is subject to CZ.NIC's published terms.",
+  },
+  {
+    name: "SGNIC",
+    tlds: [".sg"],
+    aupUrl: "https://www.sgnic.sg",
+    restrictions:
+      "Singaporean law applies. WHOIS data use is subject to SGNIC's published acceptable use policy.",
+  },
+  {
+    name: "TWNIC",
+    tlds: [".tw"],
+    aupUrl: "https://www.twnic.tw",
+    restrictions:
+      "Taiwanese law applies. WHOIS data use is subject to TWNIC's published acceptable use policy.",
+  },
+  {
+    name: "Registro.br",
+    tlds: [".br"],
+    aupUrl: "https://registro.br",
+    restrictions:
+      "Brazilian law applies. WHOIS data use is subject to Registro.br's published terms.",
+  },
+  {
+    name: "NIXI",
+    tlds: [".in"],
+    aupUrl: "https://www.registry.in",
+    restrictions:
+      "Indian law applies. WHOIS data use is subject to NIXI's published acceptable use policy.",
   },
 ];
 
@@ -271,6 +365,29 @@ export function TermsPage() {
               </div>
             </Accordion>
           ))}
+        </div>
+
+        <div className="text-sm text-muted-foreground space-y-3 leading-relaxed pt-4 border-t border-border">
+          <h3 className="font-medium text-foreground">Other Registry Operators</h3>
+          <p>
+            The Service supports over 1,200 TLDs operated by hundreds of registry
+            operators. The operators listed above represent the largest registries and the
+            most commonly queried TLDs. Many additional TLDs are operated by brand
+            registries (e.g., .apple, .samsung, .nike), regional registries, and smaller
+            gTLD operators not individually listed here.
+          </p>
+          <p>
+            <strong className="text-foreground">
+              By using the Service, you agree to comply with the acceptable use policies of
+              all registry operators whose data you access, whether or not they are
+              individually listed above.
+            </strong>{" "}
+            Each registry operator publishes their own RDAP/WHOIS terms at their respective
+            domain. If you are unsure about the terms for a specific TLD, contact us at{" "}
+            <a href="mailto:support@canyougrab.it" className="text-primary hover:underline">
+              support@canyougrab.it
+            </a>.
+          </p>
         </div>
       </section>
 
