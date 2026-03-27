@@ -28,6 +28,10 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY backend/ /app/
 COPY scripts/ /app/scripts/
 
+# Copy OpenAPI spec (served by the API at /api-reference/openapi.json)
+# _resolve_repo_file looks at parent.parent of /app/app.py = /
+COPY portal/config/routes.oas.json /portal/config/routes.oas.json
+
 # Copy compiled Go binaries
 COPY --from=go-builder /bloom-builder /app/bloom-builder
 COPY --from=go-builder /worker /app/worker
