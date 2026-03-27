@@ -23,6 +23,7 @@ Environment:
 import os
 import sys
 import gzip
+import io
 import time
 import logging
 import argparse
@@ -92,11 +93,21 @@ def extract_slds_from_zone(zone_path: str, tld: str):
     suffix = f".{tld}."
     suffix_len = len(suffix)
 
-    opener = gzip.open if zone_path.endswith('.gz') else open
-    mode = 'rt' if zone_path.endswith('.gz') else 'r'
+    # Use subprocess zcat for 10x faster decompression than Python gzip
+    if zone_path.endswith('.gz'):
+        import subprocess
+        proc = subprocess.Popen(
+            ['gzip', '-dc', zone_path],
+            stdout=subprocess.PIPE,
+            bufsize=1024 * 1024 * 8,  # 8MB buffer
+        )
+        f = io.TextIOWrapper(proc.stdout, encoding='ascii', errors='ignore')
+    else:
+        proc = None
+        f = open(zone_path, 'r', encoding='ascii', errors='ignore')
 
-    with opener(zone_path, mode, encoding='ascii', errors='ignore') as f:
-        for line in f:
+    try:
+      for line in f:
             # Skip comments and empty lines
             if not line or line[0] in (';', '$', '\n', ' ', '\t'):
                 continue
@@ -120,6 +131,10 @@ def extract_slds_from_zone(zone_path: str, tld: str):
             if sld not in seen:
                 seen.add(sld)
                 yield sld
+    finally:
+      f.close()
+      if proc:
+          proc.wait()
 
     logger.info('.%s: extracted %d unique SLDs', tld, len(seen))
 
