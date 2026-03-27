@@ -191,8 +191,8 @@ def build_tld(tld: str, token: str, valkey_client, work_dir: str) -> dict:
     # We need to know the count for optimal sizing — first pass counts, second builds
     # For large files, we estimate from file size
     file_size = os.path.getsize(zone_path)
-    # Rough estimate: ~65 bytes per NS record, ~2 NS records per domain
-    estimated_count = file_size // 130
+    # Rough estimate: ~25 compressed bytes per domain (zone files compress ~8:1)
+    estimated_count = file_size // 25
     logger.info('.%s: estimated %dM domains from %.1f MB zone file',
                 tld, estimated_count // 1_000_000, file_size / 1024 / 1024)
 
