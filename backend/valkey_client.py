@@ -333,12 +333,11 @@ def _merge_sub_job_results(parent_key: str, queued_at: str = ''):
 
 
 def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
-    """Create a job hash and enqueue it via RQ for worker processing."""
+    """Create a job hash and enqueue it for Go worker processing."""
     r = get_valkey()
     now = datetime.now(timezone.utc).isoformat()
     job_key = f'job:{job_id}'
 
-    # Store job metadata in our own hash (unchanged from pre-RQ)
     pipe = r.pipeline(transaction=True)
     pipe.hset(job_key, mapping={
         'status': 'pending',
@@ -350,18 +349,10 @@ def create_job(job_id: str, consumer: str, domains: list[str]) -> dict:
     pipe.expire(job_key, JOB_TTL)
     pipe.execute()
 
-    # Enqueue via RQ for reliable dispatch with retries.
-    # If enqueue fails, clean up the hash so it doesn't sit in 'pending' forever.
+    # Push job key directly — Go worker BLPOPs from this list.
     try:
         q = get_rq_queue()
-        q.enqueue(
-            'rq_tasks.process_domain_job',
-            job_key,
-            job_timeout=120,
-            result_ttl=0,
-            failure_ttl=JOB_TTL,
-            retry=Retry(max=2, interval=[5, 30]),
-        )
+        r.rpush(q.name, job_key)
     except Exception:
         r.delete(job_key)
         raise
