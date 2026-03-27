@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "version": "7.0.0",
+    "version": "8.0.0",
     "title": "CanYouGrab API",
-    "description": "Confidence-scored domain intelligence for AI agents. Fast DNS lookups with on-demand WHOIS verification and smart caching."
+    "description": "Confidence-scored domain availability API. Fast DNS lookups with on-demand RDAP/WHOIS verification and smart caching.\n\n## Pipeline\n\nEach domain goes through up to 5 stages: **cache** (Valkey) → **bloom filter** (zone file) → **DNS** (Unbound) → **TOS coverage check** → **RDAP/WHOIS** (rust-whois). Registered domains resolve at cache or DNS and return in <100ms. Available domains proceed to RDAP/WHOIS for high-confidence verification (~200ms for RDAP, ~7s for legacy WHOIS).\n\n## TOS Coverage\n\nRDAP and WHOIS queries are only made to registry operators explicitly listed in our [Terms of Service](https://portal.canyougrab.it/terms). This covers 820+ TLDs including all major gTLDs (.com, .net, .org, .io, .co, .dev, .app, .xyz, etc.) and popular ccTLDs (.de, .uk, .ca, .fr, .nl, .au, .jp, etc.). For uncovered TLDs (mostly brand TLDs like .apple, .nike), results are DNS-only with medium confidence.\n\n## Authentication\n\nAll endpoints require a Bearer API key in the `Authorization` header. You must accept the [Terms of Service](https://portal.canyougrab.it/terms) before making API calls — unauthenticated or non-TOS-accepted requests return 403.\n\n## Rate Limits\n\nRate limits depend on your plan (free: 30/min, basic: 300/min, pro: 1000/min, business: 3000/min). Exceeding limits returns HTTP 429."
   },
   "servers": [
     {
@@ -14,7 +14,7 @@
     "/api/check/bulk": {
       "post": {
         "summary": "Bulk Domain Availability Check",
-        "description": "Check availability of up to 100 domains in a single request. Each result includes a confidence score, data source, cache freshness, and registration details when available.\n\nThe lookup pipeline: Valkey cache → DNS (Unbound) → WHOIS/RDAP (rust-whois). DNS-only results return in <100ms. WHOIS verification adds 200-1000ms but only runs when DNS indicates a domain may be available.",
+        "description": "Check availability of up to 100 domains in a single request. Each result includes a confidence score, data source, cache freshness, and registration details when available.\n\nThe lookup pipeline: Valkey cache → bloom filter → DNS (Unbound) → TOS coverage gate → RDAP/WHOIS (rust-whois).\n\n- **Registered domains**: Resolved at cache, bloom, or DNS — return in <100ms with high confidence.\n- **Available domains (covered TLDs)**: Verified by RDAP (~200ms) or WHOIS (~7s) — return with high confidence.\n- **Available domains (uncovered TLDs)**: DNS-only — return with medium confidence. RDAP/WHOIS is not queried for TLDs whose registry operator is not listed in our Terms of Service.\n\nThis is a long-poll endpoint: the connection stays open until all domains are resolved or a 45-second timeout is reached.",
         "operationId": "bulk-domain-check",
         "parameters": [
           {
@@ -37,8 +37,8 @@
                     "type": "array",
                     "items": { "type": "string" },
                     "maxItems": 100,
-                    "description": "Array of domain names to check (max 100)",
-                    "example": ["google.com", "my-cool-startup.io", "example.museum"]
+                    "description": "Array of domain names to check (max 100, determined by your plan's domain cap)",
+                    "example": ["google.com", "my-cool-startup.io", "example.xyz"]
                   }
                 }
               }
@@ -69,7 +69,7 @@
                           "confidence": {
                             "type": "string",
                             "enum": ["high", "medium", "low"],
-                            "description": "high = verified by DNS+WHOIS or fresh DNS with active NS records. medium = DNS only (WHOIS unavailable). low = DNS failure or stale cache."
+                            "description": "high = verified by RDAP/WHOIS or confirmed registered via DNS/bloom. medium = DNS-only (TLD not covered by TOS, or WHOIS unavailable). low = DNS failure or stale cache."
                           },
                           "tld": {
                             "type": "string",
@@ -77,8 +77,8 @@
                           },
                           "source": {
                             "type": "string",
-                            "enum": ["dns", "whois", "cache"],
-                            "description": "How this result was determined. dns = Unbound NS query. whois = RDAP/WHOIS verification. cache = served from Valkey cache."
+                            "enum": ["cache", "bloom", "dns", "rdap", "whois"],
+                            "description": "How this result was determined. cache = served from Valkey cache. bloom = zone file bloom filter (registered domains only). dns = Unbound NS/NXDOMAIN lookup. rdap = RDAP verification (fast, ~200ms). whois = legacy WHOIS verification (slower, ~7s)."
                           },
                           "checked_at": {
                             "type": "string",
@@ -89,9 +89,14 @@
                             "type": "integer",
                             "description": "Seconds since this data was originally looked up. 0 = fresh lookup just now."
                           },
+                          "dns_status": {
+                            "type": "string",
+                            "enum": ["noerror_ns", "nxdomain", "noanswer", "timeout"],
+                            "description": "Raw DNS lookup result. noerror_ns = NS records found (registered). nxdomain = domain does not exist (likely available). noanswer = no NS records but no error (treated as registered). timeout = DNS query timed out. Only present for fresh lookups, not cached results."
+                          },
                           "registration": {
                             "type": ["object", "null"],
-                            "description": "Registration details for taken domains. null when domain is available or WHOIS data unavailable.",
+                            "description": "Registration details from RDAP/WHOIS for taken domains. null when domain is available, when resolved via cache/bloom/DNS (no WHOIS data fetched), or when WHOIS data is unavailable.",
                             "properties": {
                               "registrar": {
                                 "type": ["string", "null"],
@@ -111,12 +116,17 @@
                                 "type": ["string", "null"],
                                 "format": "date-time",
                                 "description": "Last WHOIS record update"
+                              },
+                              "name_servers": {
+                                "type": ["array", "null"],
+                                "items": { "type": "string" },
+                                "description": "Authoritative name servers"
                               }
                             }
                           },
                           "error": {
                             "type": "string",
-                            "description": "Error code when available is null (e.g. dns_servfail, dns_timeout)"
+                            "description": "Error code when available is null (e.g. dns_servfail, dns_timeout, sub-job failed or timed out)"
                           }
                         }
                       }
@@ -125,7 +135,7 @@
                 },
                 "examples": {
                   "mixed_results": {
-                    "summary": "Typical response with registered, available, and error results",
+                    "summary": "Typical response showing all result types",
                     "value": {
                       "results": [
                         {
@@ -134,35 +144,51 @@
                           "confidence": "high",
                           "tld": "com",
                           "source": "cache",
-                          "checked_at": "2026-03-17T14:24:59+00:00",
-                          "cache_age_seconds": 3821,
-                          "registration": {
-                            "registrar": "MarkMonitor Inc.",
-                            "created_at": "1997-09-15T04:00:00+00:00",
-                            "expires_at": "2028-09-14T04:00:00+00:00",
-                            "updated_at": "2024-08-02T00:00:00+00:00"
-                          }
+                          "checked_at": "2026-03-27T19:33:14.071783559Z",
+                          "cache_age_seconds": 15239,
+                          "registration": null
                         },
                         {
-                          "domain": "my-cool-startup.io",
+                          "domain": "my-cool-startup.com",
                           "available": true,
                           "confidence": "high",
-                          "tld": "io",
-                          "source": "whois",
-                          "checked_at": "2026-03-17T15:01:12+00:00",
+                          "tld": "com",
+                          "source": "rdap",
+                          "checked_at": "2026-03-27T23:47:13.665476758Z",
                           "cache_age_seconds": 0,
                           "registration": null
                         },
                         {
-                          "domain": "example.museum",
-                          "available": null,
-                          "confidence": "low",
-                          "tld": "museum",
-                          "source": "dns",
-                          "checked_at": "2026-03-17T15:01:12+00:00",
+                          "domain": "my-cool-startup.us",
+                          "available": true,
+                          "confidence": "high",
+                          "tld": "us",
+                          "source": "whois",
+                          "checked_at": "2026-03-27T23:47:13.671864972Z",
                           "cache_age_seconds": 0,
-                          "registration": null,
-                          "error": "dns_servfail"
+                          "registration": null
+                        },
+                        {
+                          "domain": "sedo.com",
+                          "available": false,
+                          "confidence": "high",
+                          "tld": "com",
+                          "source": "dns",
+                          "checked_at": "2026-03-27T23:39:34.399782849Z",
+                          "cache_age_seconds": 0,
+                          "dns_status": "noerror_ns",
+                          "registration": null
+                        },
+                        {
+                          "domain": "brandname.nike",
+                          "available": true,
+                          "confidence": "medium",
+                          "tld": "nike",
+                          "source": "dns",
+                          "checked_at": "2026-03-27T23:47:13.769644857Z",
+                          "cache_age_seconds": 0,
+                          "dns_status": "nxdomain",
+                          "registration": null
                         }
                       ]
                     }
@@ -171,9 +197,102 @@
               }
             }
           },
-          "400": { "description": "Invalid request (empty array or exceeds 100 domains)" },
-          "401": { "description": "Missing or invalid API key" },
-          "429": { "description": "Rate limit or quota exceeded" }
+          "400": {
+            "description": "Invalid request (empty array or exceeds domain cap for your plan)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "detail": { "type": "string" }
+                  }
+                },
+                "example": {
+                  "detail": "Invalid or revoked API key"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Terms of Service not accepted. You must accept the TOS at the portal before using the API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "error": { "type": "string", "enum": ["terms_not_accepted"] },
+                        "message": { "type": "string", "description": "Human-readable explanation of what the user needs to do" },
+                        "terms_url": { "type": "string", "format": "uri", "description": "URL to review the Terms of Service" },
+                        "portal_url": { "type": "string", "format": "uri", "description": "URL to sign in and accept the terms" },
+                        "required_version": { "type": "string", "description": "The TOS version that must be accepted" },
+                        "accepted_version": { "type": ["string", "null"], "description": "The TOS version the user previously accepted, if any" }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "detail": {
+                    "error": "terms_not_accepted",
+                    "message": "You must accept the Terms of Service before using the API. Please visit https://portal.canyougrab.it/terms to review the terms, then sign in at https://portal.canyougrab.it to accept them.",
+                    "terms_url": "https://portal.canyougrab.it/terms",
+                    "portal_url": "https://portal.canyougrab.it",
+                    "required_version": "1.0",
+                    "accepted_version": null
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or monthly quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "message": { "type": "string" },
+                    "retry_after": { "type": "integer", "description": "Seconds to wait before retrying (for rate limits)" }
+                  }
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Processing timeout — results were not ready within 45 seconds. Retry the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                },
+                "example": {
+                  "error": "Processing timeout",
+                  "message": "Results were not ready within 45 seconds. Please retry."
+                }
+              }
+            }
+          }
         },
         "security": [{ "apiKey": [] }]
       }
@@ -181,13 +300,82 @@
     "/api/account/usage": {
       "get": {
         "summary": "Get Usage Summary",
-        "description": "Returns the current billing period usage summary for the authenticated API consumer, including lookups used and remaining quota.",
+        "description": "Returns the current billing period usage summary for the authenticated API consumer, including lookups used, remaining quota, and plan details.",
         "operationId": "get-usage",
         "responses": {
-          "200": { "description": "Usage summary for the authenticated consumer" },
-          "401": { "description": "Missing or invalid API key" }
+          "200": {
+            "description": "Usage summary for the authenticated consumer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string",
+                      "enum": ["free", "free_plus", "basic", "pro", "business"],
+                      "description": "Current plan name"
+                    },
+                    "monthly_limit": {
+                      "type": "integer",
+                      "description": "Total lookups allowed per billing period"
+                    },
+                    "lookups_used": {
+                      "type": "integer",
+                      "description": "Lookups consumed in the current billing period"
+                    },
+                    "lookups_remaining": {
+                      "type": "integer",
+                      "description": "Lookups remaining in the current billing period"
+                    },
+                    "period_start": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Start of the current billing period"
+                    },
+                    "period_end": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "End of the current billing period"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Terms of Service not accepted" }
         },
         "security": [{ "apiKey": [] }]
+      }
+    },
+    "/api/plans": {
+      "get": {
+        "summary": "List Available Plans",
+        "description": "Returns all published pricing plans with their limits and pricing. No authentication required.",
+        "operationId": "list-plans",
+        "responses": {
+          "200": {
+            "description": "List of available plans",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "display_name": { "type": "string" },
+                      "price_cents": { "type": "integer" },
+                      "monthly_limit": { "type": "integer" },
+                      "minute_limit": { "type": "integer" },
+                      "domain_cap": { "type": "integer", "description": "Max domains per bulk check request" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/health": {
@@ -206,7 +394,7 @@
       "apiKey": {
         "type": "http",
         "scheme": "bearer",
-        "description": "API key passed as Bearer token in the Authorization header"
+        "description": "API key passed as Bearer token in the Authorization header. Create keys at https://portal.canyougrab.it/api-keys"
       }
     }
   }
