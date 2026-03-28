@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	resolverConcurrency = 5000
+	resolverConcurrency = 500  // reduced from 5000 — nodes are memory-constrained
 	resolverTimeout     = 2 * time.Second
 	valkeyTTL           = 8 * 24 * time.Hour // 8 days (weekly refresh + buffer)
 	pipelineBatchSize   = 500
