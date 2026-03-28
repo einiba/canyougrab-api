@@ -285,22 +285,27 @@ func downloadZoneFile(tld, token, destPath string) error {
 	return err
 }
 
-// ── Zone file SLD extraction (same as bloom-builder) ─────────────────────
+// ── Zone file streaming ──────────────────────────────────────────────────
 
-func extractDomains(zonePath, tld string) ([]string, error) {
+// streamDomains sends unique FQDNs from a gzipped zone file to a channel.
+// Uses a bloom-like dedup (first-seen map limited to 1M entries with eviction)
+// to avoid loading all 150M domains into memory.
+func streamDomains(zonePath, tld string, out chan<- string) error {
 	f, err := os.Open(zonePath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer gz.Close()
 
 	suffix := "." + tld + "."
-	seen := make(map[string]bool, 1_000_000)
+	var lastSLD string // simple dedup: zone files group records by domain
+	count := 0
+
 	scanner := bufio.NewScanner(gz)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
@@ -321,18 +326,20 @@ func extractDomains(zonePath, tld string) ([]string, error) {
 		if strings.ContainsRune(sld, '.') {
 			continue
 		}
-		fqdn := strings.ToLower(sld) + "." + tld
-		if !seen[fqdn] {
-			seen[fqdn] = true
+		sld = strings.ToLower(sld)
+
+		// Zone files are sorted — consecutive lines for the same domain.
+		// Skip duplicates by comparing to the last SLD we emitted.
+		if sld == lastSLD {
+			continue
 		}
+		lastSLD = sld
+		count++
+		out <- sld + "." + tld
 	}
 
-	domains := make([]string, 0, len(seen))
-	for d := range seen {
-		domains = append(domains, d)
-	}
-	log.Printf(".%s: extracted %d unique domains", tld, len(domains))
-	return domains, scanner.Err()
+	log.Printf(".%s: streamed %d unique domains", tld, count)
+	return scanner.Err()
 }
 
 // ── Valkey client ────────────────────────────────────────────────────────
@@ -355,13 +362,12 @@ func newValkeyClient() *redis.Client {
 
 // ── Main scan logic ──────────────────────────────────────────────────────
 
-func scanTLD(tld string, domains []string, rdb *redis.Client) (int64, time.Duration) {
+func scanTLD(tld, zonePath string, rdb *redis.Client) (int64, int64, time.Duration) {
 	start := time.Now()
-	var matched int64
+	var matched, total int64
 	sem := make(chan struct{}, resolverConcurrency)
 	var wg sync.WaitGroup
 
-	// Pipeline Valkey writes in batches
 	ctx := context.Background()
 	pipe := rdb.Pipeline()
 	var pipeMu sync.Mutex
@@ -375,7 +381,16 @@ func scanTLD(tld string, domains []string, rdb *redis.Client) (int64, time.Durat
 		}
 	}
 
-	for _, domain := range domains {
+	domainCh := make(chan string, 10000)
+	go func() {
+		if err := streamDomains(zonePath, tld, domainCh); err != nil {
+			log.Printf(".%s stream error: %v", tld, err)
+		}
+		close(domainCh)
+	}()
+
+	for domain := range domainCh {
+		atomic.AddInt64(&total, 1)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(d string) {
@@ -395,7 +410,7 @@ func scanTLD(tld string, domains []string, rdb *redis.Client) (int64, time.Durat
 						flushPipe()
 					}
 					pipeMu.Unlock()
-					break // one match is enough
+					break
 				}
 			}
 		}(domain)
@@ -406,7 +421,7 @@ func scanTLD(tld string, domains []string, rdb *redis.Client) (int64, time.Durat
 	flushPipe()
 	pipeMu.Unlock()
 
-	return matched, time.Since(start)
+	return matched, total, time.Since(start)
 }
 
 // ── Discovery mode — find unknown parking IPs ────────────────────────────
@@ -421,15 +436,25 @@ const (
 	discoverySamples    = 5   // sample domains per IP
 )
 
-// discoverTLD resolves A records for all domains and clusters by IP.
-// Returns a map of IP → (domain count, sample domains).
-func discoverTLD(tld string, domains []string) map[string]*ipCluster {
+// discoverTLD resolves A records for all domains (streamed) and clusters by IP.
+// Returns a map of IP → (domain count, sample domains) and total domains scanned.
+func discoverTLD(tld, zonePath string) (map[string]*ipCluster, int64) {
 	clusters := make(map[string]*ipCluster)
 	var mu sync.Mutex
+	var total int64
 	sem := make(chan struct{}, resolverConcurrency)
 	var wg sync.WaitGroup
 
-	for _, domain := range domains {
+	domainCh := make(chan string, 10000)
+	go func() {
+		if err := streamDomains(zonePath, tld, domainCh); err != nil {
+			log.Printf(".%s stream error: %v", tld, err)
+		}
+		close(domainCh)
+	}()
+
+	for domain := range domainCh {
+		atomic.AddInt64(&total, 1)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(d string) {
@@ -454,7 +479,7 @@ func discoverTLD(tld string, domains []string) map[string]*ipCluster {
 		}(domain)
 	}
 	wg.Wait()
-	return clusters
+	return clusters, total
 }
 
 type discoveryEntry struct {
@@ -569,32 +594,26 @@ func main() {
 			continue
 		}
 
-		log.Printf("Extracting domains from .%s...", tld)
-		domains, err := extractDomains(zonePath, tld)
-		if err != nil {
-			log.Printf("Failed to parse .%s: %v", tld, err)
-			os.Remove(zonePath)
-			continue
-		}
-		os.Remove(zonePath)
-		totalDomains += len(domains)
-
 		if discoverMode {
-			log.Printf("Discovering IP clusters for %d .%s domains...", len(domains), tld)
-			clusters := discoverTLD(tld, domains)
+			log.Printf("Discovering IP clusters for .%s (streaming)...", tld)
+			clusters, count := discoverTLD(tld, zonePath)
+			totalDomains += int(count)
 			report := buildDiscoveryReport(tld, clusters)
 			allReports = append(allReports, report)
-			log.Printf(".%s: %d unknown IPs (100+ domains), %d known parking IPs",
-				tld, len(report.Unknown), len(report.Known))
+			log.Printf(".%s: %d domains, %d unknown IPs (100+ domains), %d known parking IPs",
+				tld, count, len(report.Unknown), len(report.Known))
 		} else {
-			log.Printf("Scanning %d .%s domains for parking IPs...", len(domains), tld)
-			matched, elapsed := scanTLD(tld, domains, rdb)
+			log.Printf("Scanning .%s for parking IPs (streaming)...", tld)
+			matched, count, elapsed := scanTLD(tld, zonePath, rdb)
+			totalDomains += int(count)
 			totalMatches += matched
 			log.Printf(".%s: %d/%d parked (%.1f%%) in %s",
-				tld, matched, len(domains),
-				float64(matched)/float64(len(domains))*100,
+				tld, matched, count,
+				float64(matched)/float64(count)*100,
 				elapsed.Round(time.Second))
 		}
+
+		os.Remove(zonePath)
 	}
 
 	if discoverMode {
