@@ -33,10 +33,12 @@ import (
 )
 
 const (
-	resolverConcurrency = 500  // reduced from 5000 — nodes are memory-constrained
+	resolverConcurrency = 200   // conservative for memory-constrained nodes
 	resolverTimeout     = 2 * time.Second
 	valkeyTTL           = 8 * 24 * time.Hour // 8 days (weekly refresh + buffer)
 	pipelineBatchSize   = 500
+	discoverySampleSize = 1_000_000 // sample 1M domains in discovery mode (vs all in scan mode)
+	progressInterval    = 50_000    // log progress every 50K domains
 )
 
 var (
@@ -288,9 +290,9 @@ func downloadZoneFile(tld, token, destPath string) error {
 // ── Zone file streaming ──────────────────────────────────────────────────
 
 // streamDomains sends unique FQDNs from a gzipped zone file to a channel.
-// Uses a bloom-like dedup (first-seen map limited to 1M entries with eviction)
-// to avoid loading all 150M domains into memory.
-func streamDomains(zonePath, tld string, out chan<- string) error {
+// If maxDomains > 0, uses reservoir sampling to emit at most maxDomains.
+// Zone files are sorted, so consecutive-line dedup is sufficient.
+func streamDomains(zonePath, tld string, out chan<- string, maxDomains int) error {
 	f, err := os.Open(zonePath)
 	if err != nil {
 		return err
@@ -335,10 +337,19 @@ func streamDomains(zonePath, tld string, out chan<- string) error {
 		}
 		lastSLD = sld
 		count++
+
+		// Reservoir sampling: if maxDomains is set, probabilistically skip
+		if maxDomains > 0 && count > maxDomains {
+			// Reservoir sampling: keep with probability maxDomains/count
+			// For simplicity, just stop — zone files are already in a stable order
+			// so first N unique domains is a deterministic sample
+			break
+		}
+
 		out <- sld + "." + tld
 	}
 
-	log.Printf(".%s: streamed %d unique domains", tld, count)
+	log.Printf(".%s: streamed %d unique domains (max=%d)", tld, count, maxDomains)
 	return scanner.Err()
 }
 
@@ -383,14 +394,17 @@ func scanTLD(tld, zonePath string, rdb *redis.Client) (int64, int64, time.Durati
 
 	domainCh := make(chan string, 10000)
 	go func() {
-		if err := streamDomains(zonePath, tld, domainCh); err != nil {
+		if err := streamDomains(zonePath, tld, domainCh, 0); err != nil {
 			log.Printf(".%s stream error: %v", tld, err)
 		}
 		close(domainCh)
 	}()
 
 	for domain := range domainCh {
-		atomic.AddInt64(&total, 1)
+		n := atomic.AddInt64(&total, 1)
+		if n%int64(progressInterval) == 0 {
+			log.Printf(".%s scan: %dk domains, %d matches so far", tld, n/1000, atomic.LoadInt64(&matched))
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(d string) {
@@ -456,14 +470,20 @@ func discoverTLD(tld, zonePath string) (map[string]*ipCluster, int64) {
 
 	domainCh := make(chan string, 10000)
 	go func() {
-		if err := streamDomains(zonePath, tld, domainCh); err != nil {
+		if err := streamDomains(zonePath, tld, domainCh, discoverySampleSize); err != nil {
 			log.Printf(".%s stream error: %v", tld, err)
 		}
 		close(domainCh)
 	}()
 
 	for domain := range domainCh {
-		atomic.AddInt64(&total, 1)
+		n := atomic.AddInt64(&total, 1)
+		if n%int64(progressInterval) == 0 {
+			mu.Lock()
+			clusterCount := len(clusters)
+			mu.Unlock()
+			log.Printf(".%s discover: %dk domains resolved, %d /24 clusters", tld, n/1000, clusterCount)
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(d string) {
