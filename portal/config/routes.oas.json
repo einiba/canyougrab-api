@@ -77,8 +77,8 @@
                           },
                           "source": {
                             "type": "string",
-                            "enum": ["cache", "bloom", "dns", "rdap", "whois"],
-                            "description": "How this result was determined. cache = served from Valkey cache. bloom = zone file bloom filter (registered domains only). dns = Unbound NS/NXDOMAIN lookup. rdap = RDAP verification (fast, ~200ms). whois = legacy WHOIS verification (slower, ~7s)."
+                            "enum": ["cache", "bloom", "dns", "rdap", "whois", "registry"],
+                            "description": "How this result was determined. cache = served from Valkey cache. bloom = zone file bloom filter (registered domains only). dns = Unbound NS/NXDOMAIN lookup. rdap = RDAP verification (fast, ~200ms). whois = legacy WHOIS verification (slower, ~7s). registry = TLD-level policy (brand/closed TLDs that don't allow public registration)."
                           },
                           "checked_at": {
                             "type": "string",
@@ -126,7 +126,7 @@
                           },
                           "error": {
                             "type": "string",
-                            "description": "Error code when available is null (e.g. dns_servfail, dns_timeout, sub-job failed or timed out)"
+                            "description": "Error code when available is null. Values: dns_servfail, dns_timeout, brand_tld (TLD does not allow public registrations, e.g. .nike, .apple, .google)"
                           }
                         }
                       }
@@ -181,13 +181,13 @@
                         },
                         {
                           "domain": "brandname.nike",
-                          "available": true,
-                          "confidence": "medium",
+                          "available": null,
+                          "confidence": "high",
                           "tld": "nike",
-                          "source": "dns",
+                          "source": "registry",
                           "checked_at": "2026-03-27T23:47:13.769644857Z",
                           "cache_age_seconds": 0,
-                          "dns_status": "nxdomain",
+                          "error": "brand_tld",
                           "registration": null
                         }
                       ]

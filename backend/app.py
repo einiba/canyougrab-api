@@ -56,11 +56,11 @@ app = FastAPI(title='CanYouGrab API', version='7.0.0')
 def _startup():
     """Populate Valkey sets used by Go workers at startup."""
     try:
-        from tld_registry import populate_covered_tlds_set
-        populate_covered_tlds_set()
+        from tld_registry import populate_valkey_tld_sets
+        populate_valkey_tld_sets()
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning('Failed to populate covered TLDs: %s', e)
+        logging.getLogger(__name__).warning('Failed to populate TLD sets: %s', e)
 
 app.add_middleware(
     CORSMiddleware,

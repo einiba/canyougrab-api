@@ -26,7 +26,7 @@ def _load_registry() -> dict[str, dict]:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT tld, rdap_server, whois_disabled_at, whois_disabled_reason, origin
+                    SELECT tld, rdap_server, whois_disabled_at, whois_disabled_reason, origin, is_brand
                     FROM tld_registry
                 """)
                 for row in cur.fetchall():
@@ -35,6 +35,7 @@ def _load_registry() -> dict[str, dict]:
                         'whois_disabled': row[2] is not None,
                         'whois_disabled_reason': row[3],
                         'origin': row[4],
+                        'is_brand': row[5] or False,
                     }
         finally:
             conn.close()
@@ -77,6 +78,15 @@ def get_rdap_server(tld: str) -> str | None:
     if entry is None:
         return None
     return entry['rdap_server']
+
+
+def is_brand_tld(tld: str) -> bool:
+    """Check if this TLD is a brand/closed TLD (no public registrations)."""
+    registry = _get_registry()
+    entry = registry.get(tld.lower())
+    if entry is None:
+        return False
+    return entry['is_brand']
 
 
 # ── TOS-covered TLD enforcement ─────────────────────────────────────────
@@ -138,35 +148,55 @@ _TOS_COVERED_RDAP_HOSTS: set[str] = {
 _TOS_COVERED_TLDS_EXPLICIT: set[str] = {'us', 'de', 'jp'}
 
 _VALKEY_COVERED_KEY = 'tos:covered_tlds'
+_VALKEY_BRAND_KEY = 'tos:brand_tlds'
 
 
-def populate_covered_tlds_set() -> int:
-    """Build the tos:covered_tlds Valkey set from the TLD registry.
+def populate_valkey_tld_sets() -> tuple[int, int]:
+    """Build the tos:covered_tlds and tos:brand_tlds Valkey sets.
 
-    Called at API startup.  Workers SISMEMBER this set to decide whether
-    to make RDAP/WHOIS queries for a given TLD.
+    Called at API startup.  Go workers use SISMEMBER on these sets to:
+    - Skip RDAP/WHOIS for uncovered TLDs (return DNS-only)
+    - Return available=null for brand TLDs (no public registration)
+
+    Returns (covered_count, brand_count).
     """
     from urllib.parse import urlparse
     from valkey_client import get_valkey
 
     registry = _get_registry()
     covered = set(_TOS_COVERED_TLDS_EXPLICIT)
+    brands = set()
 
     for tld, entry in registry.items():
+        # Covered TLDs
         server = entry.get('rdap_server')
-        if not server:
-            continue
-        host = urlparse(server).hostname
-        if host and host in _TOS_COVERED_RDAP_HOSTS:
-            covered.add(tld)
+        if server:
+            host = urlparse(server).hostname
+            if host and host in _TOS_COVERED_RDAP_HOSTS:
+                covered.add(tld)
+
+        # Brand TLDs
+        if entry.get('is_brand'):
+            brands.add(tld)
 
     r = get_valkey()
     pipe = r.pipeline(transaction=True)
+    # Covered TLDs
     pipe.delete(_VALKEY_COVERED_KEY)
     if covered:
         pipe.sadd(_VALKEY_COVERED_KEY, *covered)
+    # Brand TLDs
+    pipe.delete(_VALKEY_BRAND_KEY)
+    if brands:
+        pipe.sadd(_VALKEY_BRAND_KEY, *brands)
     pipe.execute()
 
-    logger.info('Populated %s: %d covered TLDs (of %d total)',
-                _VALKEY_COVERED_KEY, len(covered), len(registry))
-    return len(covered)
+    logger.info('Populated Valkey sets: %d covered TLDs, %d brand TLDs (of %d total)',
+                len(covered), len(brands), len(registry))
+    return len(covered), len(brands)
+
+
+# Keep old name as alias for backwards compat
+def populate_covered_tlds_set() -> int:
+    covered, _ = populate_valkey_tld_sets()
+    return covered

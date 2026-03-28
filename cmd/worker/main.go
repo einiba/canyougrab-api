@@ -335,6 +335,7 @@ func checkWHOIS(domain string) map[string]interface{} {
 // ── TOS coverage check ───────────────────────────────────────────────────
 
 const tosCoveredKey = "tos:covered_tlds"
+const brandTLDsKey = "tos:brand_tlds"
 
 // isTLDCovered returns true if the TLD's registry operator is listed in
 // our Terms of Service.  Only covered TLDs may receive RDAP/WHOIS queries;
@@ -347,6 +348,16 @@ func isTLDCovered(ctx context.Context, rdb *redis.Client, tld string) bool {
 	}
 	if !ok {
 		log.Printf("TOS gate: .%s not covered — skipping RDAP/WHOIS", tld)
+	}
+	return ok
+}
+
+// isBrandTLD returns true if the TLD is a brand/closed TLD that does not
+// allow public domain registrations (e.g., .nike, .apple, .google).
+func isBrandTLD(ctx context.Context, rdb *redis.Client, tld string) bool {
+	ok, err := rdb.SIsMember(ctx, brandTLDsKey, tld).Result()
+	if err != nil {
+		return false // fail open — don't block lookups on Valkey error
 	}
 	return ok
 }
@@ -365,6 +376,16 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 	}
 	tld := parts[len(parts)-1]
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// 0. Brand TLD gate — reject domains on closed/brand TLDs immediately
+	if isBrandTLD(ctx, rdb, tld) {
+		return map[string]interface{}{
+			"domain": domain, "available": nil, "tld": tld,
+			"confidence": "high", "source": "registry",
+			"checked_at": now, "cache_age_seconds": 0,
+			"error": "brand_tld", "registration": nil,
+		}
+	}
 
 	// 1. Cache
 	if cached := checkCache(ctx, rdb, domain); cached != nil {
