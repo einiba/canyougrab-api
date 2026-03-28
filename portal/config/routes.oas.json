@@ -101,11 +101,24 @@
                           },
                           "parked": {
                             "type": "boolean",
-                            "description": "true if nameservers match a known parking service."
+                            "description": "true if nameservers match a known parking or marketplace service."
+                          },
+                          "for_sale": {
+                            "type": ["boolean", "null"],
+                            "description": "true = listed for sale (marketplace NS). null = possibly for sale (parking NS, can't confirm from DNS). false = not on any known sale platform."
+                          },
+                          "sale_platform": {
+                            "type": ["string", "null"],
+                            "description": "Marketplace or parking service name (e.g. Dan.com, Sedo, Afternic, HugeDomains)."
+                          },
+                          "sale_url": {
+                            "type": ["string", "null"],
+                            "format": "uri",
+                            "description": "Direct link to the domain's buy/listing page on the detected platform."
                           },
                           "hosting_provider": {
                             "type": ["string", "null"],
-                            "description": "Detected DNS provider (e.g. Cloudflare, AWS Route 53, Google, Sedo)."
+                            "description": "Detected DNS provider (e.g. Cloudflare, AWS Route 53, Google)."
                           },
                           "domain_age_days": {
                             "type": ["integer", "null"],
@@ -137,7 +150,7 @@
                 },
                 "examples": {
                   "mixed_results": {
-                    "summary": "Registered, available, parked, and brand TLD",
+                    "summary": "Active site, available, for-sale, parked, and brand TLD",
                     "value": {
                       "results": [
                         {
@@ -150,6 +163,9 @@
                           "cache_age_seconds": 15239,
                           "nameservers": ["ns1.google.com", "ns2.google.com", "ns3.google.com", "ns4.google.com"],
                           "parked": false,
+                          "for_sale": false,
+                          "sale_platform": null,
+                          "sale_url": null,
                           "hosting_provider": "Google",
                           "domain_age_days": null,
                           "expires_in_days": null,
@@ -164,7 +180,29 @@
                           "checked_at": "2026-03-27T23:47:13Z",
                           "cache_age_seconds": 0,
                           "parked": false,
+                          "for_sale": false,
+                          "sale_platform": null,
+                          "sale_url": null,
                           "hosting_provider": null,
+                          "domain_age_days": null,
+                          "expires_in_days": null,
+                          "registration": null
+                        },
+                        {
+                          "domain": "premium-name.com",
+                          "available": false,
+                          "confidence": "high",
+                          "tld": "com",
+                          "source": "dns",
+                          "checked_at": "2026-03-27T23:39:34Z",
+                          "cache_age_seconds": 0,
+                          "dns_status": "noerror_ns",
+                          "nameservers": ["ns1.dan.com", "ns2.dan.com"],
+                          "parked": true,
+                          "for_sale": true,
+                          "sale_platform": "Dan.com",
+                          "sale_url": "https://dan.com/buy-domain/premium-name.com",
+                          "hosting_provider": "Dan.com",
                           "domain_age_days": null,
                           "expires_in_days": null,
                           "registration": null
@@ -180,6 +218,9 @@
                           "dns_status": "noerror_ns",
                           "nameservers": ["ns1.sedoparking.com", "ns2.sedoparking.com"],
                           "parked": true,
+                          "for_sale": null,
+                          "sale_platform": "Sedo",
+                          "sale_url": "https://sedo.com/search/details.php4?domain=parked-domain.com",
                           "hosting_provider": "Sedo",
                           "domain_age_days": null,
                           "expires_in_days": null,
@@ -195,6 +236,9 @@
                           "cache_age_seconds": 0,
                           "error": "brand_tld",
                           "parked": false,
+                          "for_sale": false,
+                          "sale_platform": null,
+                          "sale_url": null,
                           "hosting_provider": null,
                           "domain_age_days": null,
                           "expires_in_days": null,
