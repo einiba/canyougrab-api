@@ -175,6 +175,12 @@ func checkCache(ctx context.Context, rdb *redis.Client, domain string) map[strin
 	if sp, ok := data["sale_platform"]; ok && sp != "" {
 		result["sale_platform_probed"] = sp
 	}
+	if pbi, ok := data["parked_by_ip"]; ok && pbi == "true" {
+		result["parked_by_ip"] = "true"
+		if svc, ok := data["parking_ip_service"]; ok && svc != "" {
+			result["parking_ip_service"] = svc
+		}
+	}
 	return result
 }
 

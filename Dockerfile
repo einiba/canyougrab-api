@@ -7,7 +7,8 @@ WORKDIR /build
 COPY go.mod ./
 COPY cmd/ ./cmd/
 RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/ && \
-    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker ./cmd/worker/
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker ./cmd/worker/ && \
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /parking-scanner ./cmd/parking-scanner/
 
 # ── Stage 2: Python runtime ──────────────────────────────────────────────────
 FROM python:3.12-slim AS base
@@ -35,6 +36,7 @@ COPY portal/config/routes.oas.json /portal/config/routes.oas.json
 # Copy compiled Go binaries
 COPY --from=go-builder /bloom-builder /app/bloom-builder
 COPY --from=go-builder /worker /app/worker
+COPY --from=go-builder /parking-scanner /app/parking-scanner
 
 EXPOSE 8000 8001
 

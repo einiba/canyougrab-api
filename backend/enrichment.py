@@ -224,9 +224,23 @@ def enrich_results(results: list[dict]) -> list[dict]:
             r['sale_platform'] = None
             r['sale_url'] = None
 
-        # Clean up internal probe fields
+        # Override with IP-based parking detection (from weekly parking scanner)
+        if r.get('parked_by_ip') == 'true':
+            r['parked'] = True
+            ip_service = r.get('parking_ip_service')
+            if ip_service and (not r['hosting_provider'] or r['hosting_provider'] == 'unknown'):
+                r['hosting_provider'] = ip_service
+            if for_sale is False and ip_service:
+                # IP says parked — mark as possibly for sale
+                r['for_sale'] = None
+                r['sale_platform'] = ip_service
+                r['sale_url'] = _sale_url(domain, ip_service)
+
+        # Clean up internal fields
         r.pop('for_sale_probed', None)
         r.pop('sale_platform_probed', None)
+        r.pop('parked_by_ip', None)
+        r.pop('parking_ip_service', None)
 
         # Domain age + expiry
         reg = r.get('registration')
