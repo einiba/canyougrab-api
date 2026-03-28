@@ -217,17 +217,27 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 			continue
 		}
 
-		// Quick check: does this line contain NS?
-		if !bytes.Contains(line, []byte("\tNS\t")) && !bytes.Contains(line, []byte(" NS ")) {
+		// Tokenize into fields (handles any whitespace: tabs, spaces, mixed)
+		fields := bytes.Fields(line)
+		if len(fields) < 4 {
 			continue
 		}
 
-		// Extract domain (first field)
-		spaceIdx := bytes.IndexAny(line, " \t")
-		if spaceIdx <= 0 {
+		// Find "NS" field — it's typically field[2] or field[3] depending on
+		// whether TTL is present: "domain TTL IN NS target" or "domain IN NS target"
+		nsIdx := -1
+		for i := 1; i < len(fields)-1; i++ {
+			if bytes.Equal(fields[i], []byte("NS")) {
+				nsIdx = i
+				break
+			}
+		}
+		if nsIdx < 0 || nsIdx >= len(fields)-1 {
 			continue
 		}
-		domainBytes := line[:spaceIdx]
+
+		// First field is the domain
+		domainBytes := fields[0]
 		if !bytes.HasSuffix(domainBytes, []byte(suffix)) {
 			continue
 		}
@@ -236,12 +246,8 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 			continue // skip subdomains
 		}
 
-		// Extract nameserver (last field)
-		fields := bytes.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		nsHost := strings.TrimRight(strings.ToLower(string(fields[len(fields)-1])), ".")
+		// Field after "NS" is the nameserver target
+		nsHost := strings.TrimRight(strings.ToLower(string(fields[nsIdx+1])), ".")
 
 		// Group by domain
 		if sld != currentSLD {
