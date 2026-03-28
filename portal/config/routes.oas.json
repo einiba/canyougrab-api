@@ -3,7 +3,7 @@
   "info": {
     "version": "8.0.0",
     "title": "CanYouGrab API",
-    "description": "Confidence-scored domain availability API. Fast DNS lookups with on-demand RDAP/WHOIS verification and smart caching.\n\n## Pipeline\n\nEach domain goes through up to 5 stages: **cache** (Valkey) → **bloom filter** (zone file) → **DNS** (Unbound) → **TOS coverage check** → **RDAP/WHOIS** (rust-whois). Registered domains resolve at cache or DNS and return in <100ms. Available domains proceed to RDAP/WHOIS for high-confidence verification (~200ms for RDAP, ~7s for legacy WHOIS).\n\n## TOS Coverage\n\nRDAP and WHOIS queries are only made to registry operators explicitly listed in our [Terms of Service](https://portal.canyougrab.it/terms). This covers 820+ TLDs including all major gTLDs (.com, .net, .org, .io, .co, .dev, .app, .xyz, etc.) and popular ccTLDs (.de, .uk, .ca, .fr, .nl, .au, .jp, etc.). For uncovered TLDs (mostly brand TLDs like .apple, .nike), results are DNS-only with medium confidence.\n\n## Authentication\n\nAll endpoints require a Bearer API key in the `Authorization` header. You must accept the [Terms of Service](https://portal.canyougrab.it/terms) before making API calls — unauthenticated or non-TOS-accepted requests return 403.\n\n## Rate Limits\n\nRate limits depend on your plan (free: 30/min, basic: 300/min, pro: 1000/min, business: 3000/min). Exceeding limits returns HTTP 429."
+    "description": "Confidence-scored domain availability API. Fast DNS lookups with on-demand RDAP/WHOIS verification and smart caching."
   },
   "servers": [
     {
