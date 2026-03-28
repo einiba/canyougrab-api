@@ -17,7 +17,7 @@ import dns.exception
 import httpx
 from fastapi import APIRouter, Request
 
-from valkey_client import get_valkey, get_rq_connection, create_job, get_job_status, get_job_results, QUEUE_NAME
+from valkey_client import get_valkey, get_rq_connection, create_split_job, get_job_status, get_job_results, QUEUE_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +366,7 @@ def health_deep():
         # Step 1: Enqueue synthetic job with all test domains
         t0 = time.monotonic()
         v = get_valkey()
-        job_id = create_job(
+        job_id = create_split_job(
             job_id=correlation_id,
             consumer="healthcheck",
             domains=all_domains,
