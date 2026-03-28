@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	resolverConcurrency = 200   // conservative for memory-constrained nodes
+	resolverConcurrency = 2000  // high concurrency for batch node (s-4vcpu-8gb)
 	resolverTimeout     = 2 * time.Second
 	valkeyTTL           = 8 * 24 * time.Hour // 8 days (weekly refresh + buffer)
 	pipelineBatchSize   = 500
