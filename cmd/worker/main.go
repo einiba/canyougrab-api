@@ -417,8 +417,8 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 			"confidence": "high", "source": "bloom",
 			"checked_at": now, "cache_age_seconds": 0, "registration": nil,
 		}
-		// Quick NS lookup for enrichment — Unbound has it cached from zone file
-		nsCtx, nsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// Quick NS lookup for enrichment — Unbound has it cached from zone file (~5ms)
+		nsCtx, nsCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		if nss, err := dnsResolver.LookupNS(nsCtx, domain); err == nil {
 			nsNames := make([]string, 0, len(nss))
 			for _, ns := range nss {
