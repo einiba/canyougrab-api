@@ -260,14 +260,20 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 		}
 		nsLineCount++
 
-		// First field is the domain
-		domainBytes := fields[0]
-		if !bytes.HasSuffix(domainBytes, []byte(suffix)) {
-			continue
+		// First field is the domain — may be FQDN (google.net.) or relative (google)
+		domainStr := strings.ToLower(strings.TrimRight(string(fields[0]), "."))
+		var sld string
+		if strings.HasSuffix(domainStr, "."+tld) {
+			// FQDN: google.net → google
+			sld = domainStr[:len(domainStr)-len(tld)-1]
+		} else if !strings.Contains(domainStr, ".") {
+			// Relative name (after $ORIGIN): google → google
+			sld = domainStr
+		} else {
+			continue // subdomain or other TLD
 		}
-		sld := strings.ToLower(string(domainBytes[:len(domainBytes)-len(suffix)]))
-		if strings.ContainsRune(sld, '.') {
-			continue // skip subdomains
+		if sld == "" || strings.ContainsRune(sld, '.') {
+			continue // skip subdomains or empty
 		}
 
 		// Field after "NS" is the nameserver target
