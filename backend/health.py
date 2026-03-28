@@ -467,8 +467,8 @@ def health_deep():
         # Step 4: Enrichment check — verify inline enrichment works
         t0 = time.monotonic()
         try:
-            from enrichment import enrich_results_inline
-            enrich_results_inline(results_list)
+            from enrichment import enrich_results
+            enrich_results(results_list)
 
             enrichment_errors = []
 
