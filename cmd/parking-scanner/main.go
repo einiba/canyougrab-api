@@ -110,6 +110,13 @@ func isParkingOrSale(cat string) bool {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -202,6 +209,9 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 	var currentSLD string
 	var currentNS []string
 	count := 0
+	lineCount := 0
+	nsLineCount := 0
+	debugSamples := 0
 
 	flush := func() {
 		if currentSLD != "" && len(currentNS) > 0 {
@@ -213,6 +223,16 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		lineCount++
+
+		// Log first 5 non-comment lines for format debugging
+		if lineCount <= 200 && len(line) > 0 && line[0] != ';' && line[0] != '$' {
+			if debugSamples < 5 {
+				debugSamples++
+				log.Printf(".%s DEBUG line %d: %q", tld, lineCount, string(line[:min(len(line), 200)]))
+			}
+		}
+
 		if len(line) == 0 || line[0] == ';' || line[0] == '$' || line[0] == ' ' || line[0] == '\t' {
 			continue
 		}
@@ -233,8 +253,12 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 			}
 		}
 		if nsIdx < 0 || nsIdx >= len(fields)-1 {
+			if nsLineCount == 0 && lineCount%1000000 == 0 {
+				log.Printf(".%s: %dM lines scanned, still 0 NS records found", tld, lineCount/1000000)
+			}
 			continue
 		}
+		nsLineCount++
 
 		// First field is the domain
 		domainBytes := fields[0]
