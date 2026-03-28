@@ -464,7 +464,40 @@ def health_deep():
         if verification_errors:
             raise Exception("; ".join(verification_errors))
 
-        # Step 4: MCP server check — must return HTTP 200
+        # Step 4: Enrichment check — verify inline enrichment works
+        t0 = time.monotonic()
+        try:
+            from enrichment import enrich_results_inline
+            enrich_results_inline(results_list)
+
+            enrichment_errors = []
+
+            # google.com should have nameservers and parked=False
+            google_r = results_by_domain.get("google.com", {})
+            google_ns = google_r.get("nameservers")
+            if not google_ns or not isinstance(google_ns, list) or len(google_ns) == 0:
+                enrichment_errors.append("google.com missing nameservers")
+            if google_r.get("parked") is not False:
+                enrichment_errors.append(f"google.com parked should be False, got {google_r.get('parked')}")
+
+            # All results should have the enrichment fields
+            for r in results_list:
+                if "parked" not in r or "hosting_provider" not in r:
+                    enrichment_errors.append(f"{r.get('domain', '?')} missing enrichment fields")
+                    break
+
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            if enrichment_errors:
+                steps["enrichment"] = {"status": "degraded", "latency_ms": latency_ms, "errors": enrichment_errors}
+            else:
+                provider = google_r.get("hosting_provider")
+                steps["enrichment"] = {"status": "ok", "latency_ms": latency_ms, "sample_provider": provider}
+
+        except Exception as e:
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            steps["enrichment"] = {"status": "error", "latency_ms": latency_ms, "error": str(e)}
+
+        # Step 5: MCP server check — must return HTTP 200
         mcp_result = _check_mcp()
         steps["mcp_server"] = mcp_result
         if mcp_result["status"] != "ok":

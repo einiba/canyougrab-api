@@ -163,6 +163,12 @@ func checkCache(ctx context.Context, rdb *redis.Client, domain string) map[strin
 	if e, ok := data["error"]; ok && e != "" {
 		result["error"] = e
 	}
+	if ns, ok := data["nameservers"]; ok && ns != "" {
+		var nsArr []string
+		if err := json.Unmarshal([]byte(ns), &nsArr); err == nil {
+			result["nameservers"] = nsArr
+		}
+	}
 	return result
 }
 
@@ -211,6 +217,13 @@ func writeCacheResult(ctx context.Context, rdb *redis.Client, domain string, res
 		"tld":             tld,
 	}
 
+	// Store nameservers if present
+	if ns, ok := result["nameservers"]; ok {
+		if nsJSON, err := json.Marshal(ns); err == nil {
+			mapping["nameservers"] = string(nsJSON)
+		}
+	}
+
 	// Determine TTL
 	var ttl time.Duration
 	if available == true {
@@ -239,15 +252,20 @@ func checkDNS(domain, tld string) map[string]interface{} {
 	ctx, cancel := context.WithTimeout(context.Background(), dnsTimeout)
 	defer cancel()
 
-	_, err := dnsResolver.LookupNS(ctx, domain)
+	nss, err := dnsResolver.LookupNS(ctx, domain)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	if err == nil {
+		nsNames := make([]string, 0, len(nss))
+		for _, ns := range nss {
+			nsNames = append(nsNames, strings.TrimRight(ns.Host, "."))
+		}
 		return map[string]interface{}{
 			"domain": domain, "available": false, "tld": tld,
 			"confidence": "high", "source": "dns",
 			"checked_at": now, "cache_age_seconds": 0,
 			"dns_status": "noerror_ns", "registration": nil,
+			"nameservers": nsNames,
 		}
 	}
 
@@ -399,6 +417,16 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 			"confidence": "high", "source": "bloom",
 			"checked_at": now, "cache_age_seconds": 0, "registration": nil,
 		}
+		// Quick NS lookup for enrichment — Unbound has it cached from zone file
+		nsCtx, nsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if nss, err := dnsResolver.LookupNS(nsCtx, domain); err == nil {
+			nsNames := make([]string, 0, len(nss))
+			for _, ns := range nss {
+				nsNames = append(nsNames, strings.TrimRight(ns.Host, "."))
+			}
+			result["nameservers"] = nsNames
+		}
+		nsCancel()
 		writeCacheResult(ctx, rdb, domain, result)
 		return result
 	}

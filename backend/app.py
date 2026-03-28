@@ -227,6 +227,12 @@ async def do_bulk_check(
             continue
         if job['status'] == 'completed':
             results = get_job_results(job_id)
+
+            # Always: lightweight inline enrichment (pure regex + date math, <1ms)
+            from enrichment import enrich_results_inline
+            enrich_results_inline(results)
+
+            # Optional: full sectioned enrichment with extra I/O (NS re-lookups, Postgres)
             if enrichment:
                 from enrichment import enrich_results_bulk
                 results = await asyncio.get_event_loop().run_in_executor(

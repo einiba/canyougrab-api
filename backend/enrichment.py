@@ -293,3 +293,43 @@ def enrich_results_bulk(results: list[dict]) -> list[dict]:
         ns = ns_map.get(r['domain'])
         enriched.append(enrich_result(r, nameservers=ns))
     return enriched
+
+
+def enrich_results_inline(results: list[dict]) -> list[dict]:
+    """Add lightweight enrichment fields to every result — no I/O.
+
+    Uses nameservers already provided by the Go worker to derive:
+    - parked: bool
+    - hosting_provider: str | None
+    - domain_age_days: int | None
+    - expires_in_days: int | None
+
+    This is pure computation (regex matching + date math) and runs in <1ms.
+    Called on every response, not gated by ?enrichment=true.
+    """
+    for r in results:
+        ns = r.get('nameservers')
+
+        # Provider + parking detection from NS records
+        if ns and isinstance(ns, list):
+            provider, _category, parked = derive_provider(ns)
+        else:
+            provider, parked = None, False
+
+        r['parked'] = parked
+        r['hosting_provider'] = provider if provider != 'unknown' else None
+
+        # Domain age + expiry from registration dates (already in result)
+        reg = r.get('registration')
+        if isinstance(reg, dict):
+            r['domain_age_days'] = _days_since(
+                reg.get('created_at') or reg.get('creation_date')
+            )
+            r['expires_in_days'] = _days_until(
+                reg.get('expires_at') or reg.get('expiration_date')
+            )
+        else:
+            r['domain_age_days'] = None
+            r['expires_in_days'] = None
+
+    return results

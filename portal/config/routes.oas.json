@@ -127,6 +127,27 @@
                           "error": {
                             "type": "string",
                             "description": "Error code when available is null. Values: dns_servfail, dns_timeout, brand_tld (TLD does not allow public registrations, e.g. .nike, .apple, .google)"
+                          },
+                          "nameservers": {
+                            "type": ["array", "null"],
+                            "items": { "type": "string" },
+                            "description": "Authoritative nameservers for the domain. Present for registered domains resolved via DNS or bloom filter. null for available domains and cache hits without NS data."
+                          },
+                          "parked": {
+                            "type": "boolean",
+                            "description": "true if the domain's nameservers match a known parking service (Sedo, Afternic, Bodis, HugeDomains, Dan.com, ParkingCrew, Above.com, Efty). false otherwise."
+                          },
+                          "hosting_provider": {
+                            "type": ["string", "null"],
+                            "description": "Detected DNS/hosting provider based on nameserver patterns (e.g. 'Cloudflare', 'AWS Route 53', 'Google', 'Sedo'). null if nameservers don't match any known provider."
+                          },
+                          "domain_age_days": {
+                            "type": ["integer", "null"],
+                            "description": "Days since the domain was first registered. Derived from registration.created_at. null if registration data is unavailable."
+                          },
+                          "expires_in_days": {
+                            "type": ["integer", "null"],
+                            "description": "Days until domain expiration. Negative if already expired. Derived from registration.expires_at. null if registration data is unavailable."
                           }
                         }
                       }
@@ -135,7 +156,7 @@
                 },
                 "examples": {
                   "mixed_results": {
-                    "summary": "Typical response showing all result types",
+                    "summary": "Typical response showing registered, available, parked, and brand TLD results",
                     "value": {
                       "results": [
                         {
@@ -146,7 +167,12 @@
                           "source": "cache",
                           "checked_at": "2026-03-27T19:33:14.071783559Z",
                           "cache_age_seconds": 15239,
-                          "registration": null
+                          "registration": null,
+                          "nameservers": ["ns1.google.com", "ns2.google.com", "ns3.google.com", "ns4.google.com"],
+                          "parked": false,
+                          "hosting_provider": "Google",
+                          "domain_age_days": null,
+                          "expires_in_days": null
                         },
                         {
                           "domain": "my-cool-startup.com",
@@ -156,20 +182,14 @@
                           "source": "rdap",
                           "checked_at": "2026-03-27T23:47:13.665476758Z",
                           "cache_age_seconds": 0,
-                          "registration": null
+                          "registration": null,
+                          "parked": false,
+                          "hosting_provider": null,
+                          "domain_age_days": null,
+                          "expires_in_days": null
                         },
                         {
-                          "domain": "my-cool-startup.us",
-                          "available": true,
-                          "confidence": "high",
-                          "tld": "us",
-                          "source": "whois",
-                          "checked_at": "2026-03-27T23:47:13.671864972Z",
-                          "cache_age_seconds": 0,
-                          "registration": null
-                        },
-                        {
-                          "domain": "sedo.com",
+                          "domain": "parked-domain.com",
                           "available": false,
                           "confidence": "high",
                           "tld": "com",
@@ -177,7 +197,12 @@
                           "checked_at": "2026-03-27T23:39:34.399782849Z",
                           "cache_age_seconds": 0,
                           "dns_status": "noerror_ns",
-                          "registration": null
+                          "registration": null,
+                          "nameservers": ["ns1.sedoparking.com", "ns2.sedoparking.com"],
+                          "parked": true,
+                          "hosting_provider": "Sedo",
+                          "domain_age_days": null,
+                          "expires_in_days": null
                         },
                         {
                           "domain": "brandname.nike",
@@ -188,7 +213,11 @@
                           "checked_at": "2026-03-27T23:47:13.769644857Z",
                           "cache_age_seconds": 0,
                           "error": "brand_tld",
-                          "registration": null
+                          "registration": null,
+                          "parked": false,
+                          "hosting_provider": null,
+                          "domain_age_days": null,
+                          "expires_in_days": null
                         }
                       ]
                     }
