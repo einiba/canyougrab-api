@@ -436,8 +436,17 @@ const (
 	discoverySamples    = 5   // sample domains per IP
 )
 
-// discoverTLD resolves A records for all domains (streamed) and clusters by IP.
-// Returns a map of IP → (domain count, sample domains) and total domains scanned.
+// ipTo24 extracts the /24 prefix from an IPv4 address: "1.2.3.4" → "1.2.3.0/24"
+func ipTo24(ip net.IP) string {
+	v4 := ip.To4()
+	if v4 == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])
+}
+
+// discoverTLD resolves A records for all domains (streamed) and clusters by /24 CIDR.
+// Aggregating by /24 instead of per-IP keeps memory bounded (~200K unique /24s typical).
 func discoverTLD(tld, zonePath string) (map[string]*ipCluster, int64) {
 	clusters := make(map[string]*ipCluster)
 	var mu sync.Mutex
@@ -463,12 +472,15 @@ func discoverTLD(tld, zonePath string) (map[string]*ipCluster, int64) {
 
 			ips := lookupA(d)
 			for _, ip := range ips {
-				ipStr := ip.String()
+				prefix := ipTo24(ip)
+				if prefix == "" {
+					continue
+				}
 				mu.Lock()
-				c := clusters[ipStr]
+				c := clusters[prefix]
 				if c == nil {
 					c = &ipCluster{}
-					clusters[ipStr] = c
+					clusters[prefix] = c
 				}
 				c.count++
 				if len(c.samples) < discoverySamples {
@@ -499,26 +511,26 @@ type discoveryReport struct {
 func buildDiscoveryReport(tld string, clusters map[string]*ipCluster) discoveryReport {
 	var unknown, known []discoveryEntry
 
-	for ipStr, c := range clusters {
+	for prefix, c := range clusters {
 		if c.count < discoveryMinDomains {
 			continue
 		}
-		ip := net.ParseIP(ipStr)
-		service, matched := matchParkingIP(ip)
+		// Check if any IP in this /24 matches a known parking CIDR
+		// Use the .1 address as representative
+		_, network, _ := net.ParseCIDR(prefix)
+		repIP := make(net.IP, 4)
+		copy(repIP, network.IP.To4())
+		repIP[3] = 1
+
+		service, matched := matchParkingIP(repIP)
 		entry := discoveryEntry{
-			IP:      ipStr,
+			IP:      prefix,
 			Count:   c.count,
 			Samples: c.samples,
 		}
 		if matched {
 			entry.Known = service
-			// Find matching CIDR for reference
-			for _, p := range parkingCIDRs {
-				if p.network.Contains(ip) {
-					entry.CIDR = p.network.String()
-					break
-				}
-			}
+			entry.CIDR = prefix
 			known = append(known, entry)
 		} else {
 			unknown = append(unknown, entry)
