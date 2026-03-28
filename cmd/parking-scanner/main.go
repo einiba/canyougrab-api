@@ -1,13 +1,19 @@
-// Weekly parking IP scanner — resolves A records for zone file domains and
-// flags those pointing to known parking service IPs.
+// Parking detection from zone files + reverse IP discovery.
 //
-// Reuses CZDS auth + zone file download from the bloom builder.
-// Resolves A records via Unbound (cluster-local DNS resolver).
-// Writes matches to Valkey dom:{domain} hashes for enrichment.
+// Pass 1 (default): Parse NS records from CZDS zone files, match against
+// known parking/marketplace patterns, write matches to Valkey. No DNS needed.
+//
+// Pass 2 (--reverse): Resolve A records for domains already flagged as parked
+// (from Pass 1), cluster by /24 IP to discover unknown parking infrastructure.
+// Rate-limited to ~80 queries/sec to avoid upstream blocking.
+//
+// Pass 3 (--discover): Cluster all NS base domains from zone files, report
+// unknown patterns with 100+ domains. For finding new parking services.
 //
 // Usage:
-//   CZDS_USERNAME=... CZDS_PASSWORD=... /app/parking-scanner [tld ...]
-//   CZDS_USERNAME=... CZDS_PASSWORD=... /app/parking-scanner com net org
+//   /app/parking-scanner [tld ...]              # Pass 1: zone file NS scan
+//   /app/parking-scanner --discover [tld ...]   # NS discovery mode
+//   /app/parking-scanner --reverse              # Pass 2: reverse IP for parked domains
 package main
 
 import (
@@ -33,18 +39,76 @@ import (
 )
 
 const (
-	resolverConcurrency = 2000  // high concurrency for batch node (s-4vcpu-8gb)
-	resolverTimeout     = 2 * time.Second
-	valkeyTTL           = 8 * 24 * time.Hour // 8 days (weekly refresh + buffer)
-	pipelineBatchSize   = 500
-	discoverySampleSize = 1_000_000 // sample 1M domains in discovery mode (vs all in scan mode)
-	progressInterval    = 50_000    // log progress every 50K domains
+	valkeyTTL        = 25 * time.Hour // zone files refresh daily
+	pipelineBatch    = 1000
+	progressInterval = 50_000
+	discoverMinCount = 100
+	discoverSamples  = 5
+	reverseRate      = 80 // queries/sec for reverse IP mode
 )
 
-var (
-	dnsHost = getenv("DNS_RESOLVER_HOSTNAME", "unbound.canyougrab.svc.cluster.local")
-	dnsPort = getenv("DNS_RESOLVER_PORT", "53")
-)
+// ── Known NS providers (from enrichment.py) ──────────────────────────────
+
+type providerInfo struct {
+	Name     string
+	Category string // "for_sale", "parking", "dns_hosting", "registrar", "self_hosted"
+}
+
+var knownProviders = map[string]providerInfo{
+	// Marketplace (for_sale)
+	"dan.com": {"Dan.com", "for_sale"}, "undeveloped.com": {"Dan.com", "for_sale"},
+	"park.do": {"Dan.com", "for_sale"}, "afternic.com": {"Afternic", "for_sale"},
+	"eftydns.com": {"Efty", "for_sale"}, "squadhelp.com": {"Squadhelp", "for_sale"},
+	"hugedomains.com": {"HugeDomains", "for_sale"}, "domainmarket.com": {"DomainMarket", "for_sale"},
+	"brandshelter.com": {"BrandShelter", "for_sale"}, "sav.com": {"Sav.com", "for_sale"},
+	"uniregistry.net": {"Uniregistry", "for_sale"}, "namefind.com": {"NameFind", "for_sale"},
+	"buydomains.com": {"BuyDomains", "for_sale"}, "domainprofi.de": {"DomainProfi", "for_sale"},
+	// Parking
+	"sedoparking.com": {"Sedo", "parking"}, "parkingcrew.net": {"ParkingCrew", "parking"},
+	"above.com": {"Above.com", "parking"}, "bodis.com": {"Bodis", "parking"},
+	"cashparking.com": {"GoDaddy CashParking", "parking"}, "smartname.com": {"GoDaddy CashParking", "parking"},
+	"parklogic.com": {"ParkLogic", "parking"}, "voodoo.com": {"Voodoo", "parking"},
+	"dsredirection.com": {"DS Redirection", "parking"}, "domainnamesales.com": {"Domain Name Sales", "parking"},
+	"domainparkingserver.net": {"DomainParkingServer", "parking"}, "parkpage.com": {"ParkPage", "parking"},
+	"ztomy.com": {"Ztomy", "parking"}, "realtime.at": {"Realtime", "parking"},
+	"dopa.com": {"DOPA", "parking"}, "rookdns.com": {"RookDNS", "parking"},
+	"itidns.com": {"ITI DNS", "parking"}, "trafficz.com": {"Trafficz", "parking"},
+	"namedrive.com": {"NameDrive", "parking"}, "skenzo.com": {"Skenzo", "parking"},
+	"tonic.to": {"Tonic", "parking"},
+	// DNS hosting (detected but not written to Valkey)
+	"google.com": {"Google", "self_hosted"}, "googledomains.com": {"Google Domains", "dns_hosting"},
+	"cloudflare.com": {"Cloudflare", "dns_hosting"}, "squarespace.com": {"Squarespace", "dns_hosting"},
+	"wixdns.net": {"Wix", "dns_hosting"}, "myshopify.com": {"Shopify", "dns_hosting"},
+	"vercel-dns.com": {"Vercel", "dns_hosting"}, "nsone.net": {"NS1 / Netlify", "dns_hosting"},
+	"hostinger.com": {"Hostinger", "dns_hosting"}, "digitalocean.com": {"DigitalOcean", "dns_hosting"},
+	// Registrar
+	"domaincontrol.com": {"GoDaddy", "registrar"}, "registrar-servers.com": {"Namecheap", "registrar"},
+	"porkbun.com": {"Porkbun", "registrar"}, "dynadot.com": {"Dynadot", "registrar"},
+	"namebrightdns.com": {"NameBright", "registrar"}, "gandi.net": {"Gandi", "registrar"},
+	"ovh.net": {"OVH", "registrar"}, "opensrs.net": {"OpenSRS / Tucows", "registrar"},
+}
+
+func nsBaseDomain(ns string) string {
+	ns = strings.TrimRight(strings.ToLower(ns), ".")
+	parts := strings.Split(ns, ".")
+	if len(parts) < 2 {
+		return ns
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+func lookupProvider(nsBase string) (providerInfo, bool) {
+	if info, ok := knownProviders[nsBase]; ok {
+		return info, true
+	}
+	return providerInfo{}, false
+}
+
+func isParkingOrSale(cat string) bool {
+	return cat == "parking" || cat == "for_sale"
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -53,224 +117,27 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-// ── Parking IP CIDRs (from MISP + TMA22) ────────────────────────────────
-
-type parkingCIDR struct {
-	network *net.IPNet
-	service string
-}
-
-// Known parking service IP ranges with service attribution.
-// Source: https://github.com/MISP/misp-warninglists/blob/main/lists/parking-domain/list.json
-// + TMA22 parking_services.json for service names.
-var parkingCIDRs []parkingCIDR
-
-func init() {
-	type entry struct {
-		cidr    string
-		service string
-	}
-	// Major ranges with known service attribution
-	entries := []entry{
-		// Bodis
-		{"199.59.240.0/22", "Bodis"},
-		{"199.59.243.160/27", "Bodis"},
-		{"199.59.243.192/27", "Bodis"},
-		{"199.59.243.224/29", "Bodis"},
-		// ParkingCrew
-		{"185.53.176.0/22", "ParkingCrew"},
-		// Sedo
-		{"91.195.240.0/23", "Sedo"},
-		{"91.195.240.80/28", "Sedo"},
-		{"64.190.62.0/23", "Sedo"},
-		// Above.com / Trellian
-		{"204.11.56.0/23", "Above.com"},
-		{"66.81.199.0/24", "Above.com"},
-		// GoDaddy free parking / CashParking
-		{"34.102.136.180/32", "GoDaddy"},
-		{"34.98.99.30/32", "GoDaddy"},
-		{"35.186.238.101/32", "GoDaddy CashParking"},
-		{"3.33.130.190/32", "GoDaddy"},
-		{"15.197.148.33/32", "GoDaddy"},
-		// DomainSponsor / Oversee
-		{"208.91.196.0/23", "DomainSponsor"},
-		{"208.91.196.46/32", "DomainSponsor"},
-		{"208.91.197.46/32", "DomainSponsor"},
-		{"208.91.197.91/32", "DomainSponsor"},
-		// Dan.com
-		{"52.58.78.16/32", "Dan.com"},
-		{"3.64.163.50/32", "Dan.com"},
-		// Afternic/NameFind
-		{"209.99.64.0/24", "Afternic"},
-		{"209.99.40.222/32", "Afternic"},
-		// HugeDomains
-		{"75.2.115.196/32", "HugeDomains"},
-		{"75.2.18.233/32", "HugeDomains"},
-		{"75.2.26.18/32", "HugeDomains"},
-		{"75.2.37.224/32", "HugeDomains"},
-		{"76.223.65.111/32", "HugeDomains"},
-		{"99.83.154.118/32", "HugeDomains"},
-		// Remaining MISP entries (service unknown — generic "parking")
-		{"103.120.80.111/32", "parking"},
-		{"103.139.0.32/32", "parking"},
-		{"103.224.182.0/23", "parking"},
-		{"103.224.212.0/23", "parking"},
-		{"104.26.6.37/32", "parking"},
-		{"104.26.7.37/32", "parking"},
-		{"119.28.128.52/32", "parking"},
-		{"121.254.178.252/32", "parking"},
-		{"13.225.34.0/24", "parking"},
-		{"13.227.219.0/24", "parking"},
-		{"13.248.216.40/32", "parking"},
-		{"135.148.9.101/32", "parking"},
-		{"141.8.224.195/32", "parking"},
-		{"158.247.7.206/32", "parking"},
-		{"158.69.201.47/32", "parking"},
-		{"159.89.244.183/32", "parking"},
-		{"164.90.244.158/32", "parking"},
-		{"172.67.70.191/32", "parking"},
-		{"18.164.52.0/24", "parking"},
-		{"185.134.245.113/32", "parking"},
-		{"188.93.95.11/32", "parking"},
-		{"192.185.0.218/32", "parking"},
-		{"192.64.147.0/24", "parking"},
-		{"194.58.112.165/32", "parking"},
-		{"194.58.112.174/32", "parking"},
-		{"198.54.117.192/26", "parking"},
-		{"199.191.50.0/24", "parking"},
-		{"199.58.179.10/32", "parking"},
-		{"2.57.90.16/32", "parking"},
-		{"207.148.248.143/32", "parking"},
-		{"207.148.248.145/32", "parking"},
-		{"213.145.228.16/32", "parking"},
-		{"213.171.195.105/32", "parking"},
-		{"216.40.34.41/32", "parking"},
-		{"217.160.141.142/32", "parking"},
-		{"217.160.95.94/32", "parking"},
-		{"217.26.48.101/32", "parking"},
-		{"217.70.184.38/32", "parking"},
-		{"217.70.184.50/32", "parking"},
-		{"3.139.159.151/32", "parking"},
-		{"3.234.55.179/32", "parking"},
-		{"31.186.11.254/32", "parking"},
-		{"31.31.205.163/32", "parking"},
-		{"34.102.221.37/32", "parking"},
-		{"35.227.197.36/32", "parking"},
-		{"37.97.254.27/32", "parking"},
-		{"43.128.56.249/32", "parking"},
-		{"45.79.222.138/32", "parking"},
-		{"45.88.202.115/32", "parking"},
-		{"46.28.105.2/32", "parking"},
-		{"46.30.211.38/32", "parking"},
-		{"46.4.13.97/32", "parking"},
-		{"46.8.8.100/32", "parking"},
-		{"47.91.170.222/32", "parking"},
-		{"5.9.161.60/32", "parking"},
-		{"50.28.32.8/32", "parking"},
-		{"52.128.23.153/32", "parking"},
-		{"52.222.139.0/24", "parking"},
-		{"52.222.149.0/24", "parking"},
-		{"52.222.158.0/24", "parking"},
-		{"52.222.174.0/24", "parking"},
-		{"52.60.87.163/32", "parking"},
-		{"52.84.174.0/24", "parking"},
-		{"62.149.128.40/32", "parking"},
-		{"64.70.19.203/32", "parking"},
-		{"64.70.19.98/32", "parking"},
-		{"74.220.199.14/32", "parking"},
-		{"74.220.199.15/32", "parking"},
-		{"74.220.199.6/32", "parking"},
-		{"74.220.199.8/32", "parking"},
-		{"74.220.199.9/32", "parking"},
-		{"78.47.145.38/32", "parking"},
-		{"81.2.194.128/32", "parking"},
-		{"88.198.29.97/32", "parking"},
-		{"91.184.0.100/32", "parking"},
-		{"93.191.168.52/32", "parking"},
-		{"94.136.40.51/32", "parking"},
-		{"95.217.58.108/32", "parking"},
-		{"98.124.204.16/32", "parking"},
-	}
-
-	for _, e := range entries {
-		_, network, err := net.ParseCIDR(e.cidr)
-		if err != nil {
-			log.Fatalf("bad CIDR %q: %v", e.cidr, err)
-		}
-		parkingCIDRs = append(parkingCIDRs, parkingCIDR{network: network, service: e.service})
-	}
-	log.Printf("Loaded %d parking CIDRs", len(parkingCIDRs))
-}
-
-func matchParkingIP(ip net.IP) (string, bool) {
-	for _, p := range parkingCIDRs {
-		if p.network.Contains(ip) {
-			return p.service, true
-		}
-	}
-	return "", false
-}
-
-// ── DNS resolver (via Unbound) ───────────────────────────────────────────
-
-var resolver = &net.Resolver{
-	PreferGo: true,
-	Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		d := net.Dialer{Timeout: resolverTimeout}
-		return d.DialContext(ctx, "udp", net.JoinHostPort(dnsHost, dnsPort))
-	},
-}
-
-func lookupA(domain string) []net.IP {
-	ctx, cancel := context.WithTimeout(context.Background(), resolverTimeout)
-	defer cancel()
-	addrs, err := resolver.LookupIPAddr(ctx, domain)
-	if err != nil {
-		return nil
-	}
-	ips := make([]net.IP, 0, len(addrs))
-	for _, a := range addrs {
-		if a.IP.To4() != nil { // IPv4 only
-			ips = append(ips, a.IP)
-		}
-	}
-	return ips
-}
-
-// ── CZDS auth + download (same as bloom-builder) ─────────────────────────
+// ── CZDS auth + download ─────────────────────────────────────────────────
 
 func czdsAuthenticate(username, password string) (string, error) {
-	payload, _ := json.Marshal(map[string]string{
-		"username": username,
-		"password": password,
-	})
-	resp, err := http.Post(
-		"https://account-api.icann.org/api/authenticate",
-		"application/json",
-		bytes.NewReader(payload),
-	)
+	payload, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	resp, err := http.Post("https://account-api.icann.org/api/authenticate", "application/json", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("czds auth: %w", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("czds auth: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	var result struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("czds auth decode: %w", err)
-	}
+	var result struct{ AccessToken string `json:"accessToken"` }
+	json.NewDecoder(resp.Body).Decode(&result)
 	return result.AccessToken, nil
 }
 
 func downloadZoneFile(tld, token, destPath string) error {
-	zoneURL := fmt.Sprintf("https://czds-download-api.icann.org/czds/downloads/%s.zone", tld)
-	req, _ := http.NewRequest("GET", zoneURL, nil)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("https://czds-download-api.icann.org/czds/downloads/%s.zone", tld), nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Minute}).Do(req)
 	if err != nil {
 		return err
 	}
@@ -285,72 +152,6 @@ func downloadZoneFile(tld, token, destPath string) error {
 	defer f.Close()
 	_, err = io.Copy(f, resp.Body)
 	return err
-}
-
-// ── Zone file streaming ──────────────────────────────────────────────────
-
-// streamDomains sends unique FQDNs from a gzipped zone file to a channel.
-// If maxDomains > 0, uses reservoir sampling to emit at most maxDomains.
-// Zone files are sorted, so consecutive-line dedup is sufficient.
-func streamDomains(zonePath, tld string, out chan<- string, maxDomains int) error {
-	f, err := os.Open(zonePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-
-	suffix := "." + tld + "."
-	var lastSLD string // simple dedup: zone files group records by domain
-	count := 0
-
-	scanner := bufio.NewScanner(gz)
-	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 || line[0] == ';' || line[0] == '$' || line[0] == ' ' || line[0] == '\t' {
-			continue
-		}
-		spaceIdx := bytes.IndexAny(line, " \t")
-		if spaceIdx <= 0 {
-			continue
-		}
-		domain := string(line[:spaceIdx])
-		if !strings.HasSuffix(domain, suffix) {
-			continue
-		}
-		sld := domain[:len(domain)-len(suffix)]
-		if strings.ContainsRune(sld, '.') {
-			continue
-		}
-		sld = strings.ToLower(sld)
-
-		// Zone files are sorted — consecutive lines for the same domain.
-		// Skip duplicates by comparing to the last SLD we emitted.
-		if sld == lastSLD {
-			continue
-		}
-		lastSLD = sld
-		count++
-
-		// Reservoir sampling: if maxDomains is set, probabilistically skip
-		if maxDomains > 0 && count > maxDomains {
-			// Reservoir sampling: keep with probability maxDomains/count
-			// For simplicity, just stop — zone files are already in a stable order
-			// so first N unique domains is a deterministic sample
-			break
-		}
-
-		out <- sld + "." + tld
-	}
-
-	log.Printf(".%s: streamed %d unique domains (max=%d)", tld, count, maxDomains)
-	return scanner.Err()
 }
 
 // ── Valkey client ────────────────────────────────────────────────────────
@@ -371,14 +172,94 @@ func newValkeyClient() *redis.Client {
 	return redis.NewClient(opts)
 }
 
-// ── Main scan logic ──────────────────────────────────────────────────────
+// ── Zone file NS streaming ───────────────────────────────────────────────
 
-func scanTLD(tld, zonePath string, rdb *redis.Client) (int64, int64, time.Duration) {
+// domainNS holds a domain and its collected nameservers from the zone file.
+type domainNS struct {
+	domain      string
+	nameservers []string
+}
+
+// streamNSRecords parses NS records from a gzipped zone file and emits
+// (domain, []nameservers) pairs grouped by domain. Zone files are sorted
+// by domain name, so we accumulate NS records until the domain changes.
+func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
+	f, err := os.Open(zonePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	suffix := "." + tld + "."
+	scanner := bufio.NewScanner(gz)
+	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+
+	var currentSLD string
+	var currentNS []string
+	count := 0
+
+	flush := func() {
+		if currentSLD != "" && len(currentNS) > 0 {
+			count++
+			out <- domainNS{domain: currentSLD + "." + tld, nameservers: currentNS}
+		}
+		currentNS = nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 || line[0] == ';' || line[0] == '$' || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+
+		// Quick check: does this line contain NS?
+		if !bytes.Contains(line, []byte("\tNS\t")) && !bytes.Contains(line, []byte(" NS ")) {
+			continue
+		}
+
+		// Extract domain (first field)
+		spaceIdx := bytes.IndexAny(line, " \t")
+		if spaceIdx <= 0 {
+			continue
+		}
+		domainBytes := line[:spaceIdx]
+		if !bytes.HasSuffix(domainBytes, []byte(suffix)) {
+			continue
+		}
+		sld := strings.ToLower(string(domainBytes[:len(domainBytes)-len(suffix)]))
+		if strings.ContainsRune(sld, '.') {
+			continue // skip subdomains
+		}
+
+		// Extract nameserver (last field)
+		fields := bytes.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		nsHost := strings.TrimRight(strings.ToLower(string(fields[len(fields)-1])), ".")
+
+		// Group by domain
+		if sld != currentSLD {
+			flush()
+			currentSLD = sld
+		}
+		currentNS = append(currentNS, nsHost)
+	}
+	flush()
+
+	log.Printf(".%s: streamed %d domains with NS records", tld, count)
+	return scanner.Err()
+}
+
+// ── Pass 1: Zone file NS scan ────────────────────────────────────────────
+
+func scanZoneNS(tld, zonePath string, rdb *redis.Client) (parked, forSale, total int64, elapsed time.Duration) {
 	start := time.Now()
-	var matched, total int64
-	sem := make(chan struct{}, resolverConcurrency)
-	var wg sync.WaitGroup
-
 	ctx := context.Background()
 	pipe := rdb.Pipeline()
 	var pipeMu sync.Mutex
@@ -392,65 +273,187 @@ func scanTLD(tld, zonePath string, rdb *redis.Client) (int64, int64, time.Durati
 		}
 	}
 
-	domainCh := make(chan string, 10000)
+	ch := make(chan domainNS, 10000)
 	go func() {
-		if err := streamDomains(zonePath, tld, domainCh, 0); err != nil {
-			log.Printf(".%s stream error: %v", tld, err)
+		if err := streamNSRecords(zonePath, tld, ch); err != nil {
+			log.Printf(".%s NS stream error: %v", tld, err)
 		}
-		close(domainCh)
+		close(ch)
 	}()
 
-	for domain := range domainCh {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	for rec := range ch {
 		n := atomic.AddInt64(&total, 1)
 		if n%int64(progressInterval) == 0 {
-			log.Printf(".%s scan: %dk domains, %d matches so far", tld, n/1000, atomic.LoadInt64(&matched))
+			log.Printf(".%s scan: %dk domains, %d parked, %d for_sale",
+				tld, n/1000, atomic.LoadInt64(&parked), atomic.LoadInt64(&forSale))
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(d string) {
-			defer wg.Done()
-			defer func() { <-sem }()
 
-			ips := lookupA(d)
-			for _, ip := range ips {
-				service, ok := matchParkingIP(ip)
-				if ok {
-					atomic.AddInt64(&matched, 1)
-					pipeMu.Lock()
-					pipe.HSet(ctx, "dom:"+d, "parked_by_ip", "true", "parking_ip_service", service)
-					pipe.Expire(ctx, "dom:"+d, valkeyTTL)
-					pipeCount++
-					if pipeCount >= pipelineBatchSize {
-						flushPipe()
-					}
-					pipeMu.Unlock()
-					break
-				}
+		// Match first NS against known providers
+		var matched *providerInfo
+		for _, ns := range rec.nameservers {
+			base := nsBaseDomain(ns)
+			if info, ok := lookupProvider(base); ok {
+				matched = &info
+				break
 			}
-		}(domain)
+		}
+
+		// Only write parking + marketplace to Valkey
+		if matched != nil && isParkingOrSale(matched.Category) {
+			if matched.Category == "parking" {
+				atomic.AddInt64(&parked, 1)
+			} else {
+				atomic.AddInt64(&forSale, 1)
+			}
+
+			nsJSON, _ := json.Marshal(rec.nameservers)
+			pipeMu.Lock()
+			pipe.HSet(ctx, "dom:"+rec.domain, map[string]interface{}{
+				"available":       "false",
+				"confidence":      "high",
+				"original_source": "zone",
+				"tld":             tld,
+				"cached_at":       now,
+				"nameservers":     string(nsJSON),
+				"parking_provider": matched.Name,
+				"parking_category": matched.Category,
+			})
+			pipe.Expire(ctx, "dom:"+rec.domain, valkeyTTL)
+			pipeCount++
+			if pipeCount >= pipelineBatch {
+				flushPipe()
+			}
+			pipeMu.Unlock()
+		}
 	}
 
-	wg.Wait()
 	pipeMu.Lock()
 	flushPipe()
 	pipeMu.Unlock()
 
-	return matched, total, time.Since(start)
+	return parked, forSale, total, time.Since(start)
 }
 
-// ── Discovery mode — find unknown parking IPs ────────────────────────────
+// ── NS Discovery mode ────────────────────────────────────────────────────
 
-type ipCluster struct {
+type nsCluster struct {
 	count   int
 	samples []string
 }
 
-const (
-	discoveryMinDomains = 100 // only report IPs hosting 100+ domains
-	discoverySamples    = 5   // sample domains per IP
-)
+type clusterEntry struct {
+	NSBase   string   `json:"ns_base"`
+	Count    int      `json:"count"`
+	Samples  []string `json:"samples"`
+	Provider string   `json:"provider,omitempty"`
+	Category string   `json:"category,omitempty"`
+}
 
-// ipTo24 extracts the /24 prefix from an IPv4 address: "1.2.3.4" → "1.2.3.0/24"
+type discoveryReport struct {
+	TLD     string         `json:"tld"`
+	Unknown []clusterEntry `json:"unknown"`
+	Known   []clusterEntry `json:"known"`
+}
+
+func discoverZoneNS(tld, zonePath string) discoveryReport {
+	clusters := make(map[string]*nsCluster)
+
+	ch := make(chan domainNS, 10000)
+	var total int64
+	go func() {
+		if err := streamNSRecords(zonePath, tld, ch); err != nil {
+			log.Printf(".%s NS stream error: %v", tld, err)
+		}
+		close(ch)
+	}()
+
+	for rec := range ch {
+		n := atomic.AddInt64(&total, 1)
+		if n%int64(progressInterval) == 0 {
+			log.Printf(".%s discover: %dk domains, %d clusters", tld, n/1000, len(clusters))
+		}
+		for _, ns := range rec.nameservers {
+			base := nsBaseDomain(ns)
+			c := clusters[base]
+			if c == nil {
+				c = &nsCluster{}
+				clusters[base] = c
+			}
+			c.count++
+			if len(c.samples) < discoverSamples {
+				c.samples = append(c.samples, rec.domain)
+			}
+			break // one NS per domain is enough for clustering
+		}
+	}
+
+	var unknown, known []clusterEntry
+	for base, c := range clusters {
+		if c.count < discoverMinCount {
+			continue
+		}
+		entry := clusterEntry{NSBase: base, Count: c.count, Samples: c.samples}
+		if info, ok := lookupProvider(base); ok {
+			entry.Provider = info.Name
+			entry.Category = info.Category
+			known = append(known, entry)
+		} else {
+			unknown = append(unknown, entry)
+		}
+	}
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i].Count > unknown[j].Count })
+	sort.Slice(known, func(i, j int) bool { return known[i].Count > known[j].Count })
+
+	log.Printf(".%s: %d domains, %d unknown clusters, %d known",
+		tld, total, len(unknown), len(known))
+	return discoveryReport{TLD: tld, Unknown: unknown, Known: known}
+}
+
+// ── Pass 2: Reverse IP discovery ─────────────────────────────────────────
+
+// MISP parking CIDRs (attributed)
+type parkingCIDR struct {
+	network *net.IPNet
+	service string
+}
+
+var parkingCIDRs []parkingCIDR
+
+func init() {
+	entries := []struct{ cidr, service string }{
+		{"199.59.240.0/22", "Bodis"}, {"185.53.176.0/22", "ParkingCrew"},
+		{"91.195.240.0/23", "Sedo"}, {"64.190.62.0/23", "Sedo"},
+		{"204.11.56.0/23", "Above.com"}, {"66.81.199.0/24", "Above.com"},
+		{"34.102.136.180/32", "GoDaddy"}, {"34.98.99.30/32", "GoDaddy"},
+		{"35.186.238.101/32", "GoDaddy CashParking"},
+		{"3.33.130.190/32", "GoDaddy"}, {"15.197.148.33/32", "GoDaddy"},
+		{"208.91.196.0/23", "DomainSponsor"},
+		{"52.58.78.16/32", "Dan.com"}, {"3.64.163.50/32", "Dan.com"},
+		{"209.99.64.0/24", "Afternic"}, {"209.99.40.222/32", "Afternic"},
+		{"75.2.115.196/32", "HugeDomains"}, {"75.2.18.233/32", "HugeDomains"},
+		{"75.2.26.18/32", "HugeDomains"}, {"75.2.37.224/32", "HugeDomains"},
+		{"76.223.65.111/32", "HugeDomains"}, {"99.83.154.118/32", "HugeDomains"},
+	}
+	for _, e := range entries {
+		_, network, err := net.ParseCIDR(e.cidr)
+		if err != nil {
+			log.Fatalf("bad CIDR %q: %v", e.cidr, err)
+		}
+		parkingCIDRs = append(parkingCIDRs, parkingCIDR{network: network, service: e.service})
+	}
+}
+
+func matchParkingIP(ip net.IP) (string, bool) {
+	for _, p := range parkingCIDRs {
+		if p.network.Contains(ip) {
+			return p.service, true
+		}
+	}
+	return "", false
+}
+
 func ipTo24(ip net.IP) string {
 	v4 := ip.To4()
 	if v4 == nil {
@@ -459,112 +462,124 @@ func ipTo24(ip net.IP) string {
 	return fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])
 }
 
-// discoverTLD resolves A records for all domains (streamed) and clusters by /24 CIDR.
-// Aggregating by /24 instead of per-IP keeps memory bounded (~200K unique /24s typical).
-func discoverTLD(tld, zonePath string) (map[string]*ipCluster, int64) {
-	clusters := make(map[string]*ipCluster)
-	var mu sync.Mutex
-	var total int64
-	sem := make(chan struct{}, resolverConcurrency)
-	var wg sync.WaitGroup
-
-	domainCh := make(chan string, 10000)
-	go func() {
-		if err := streamDomains(zonePath, tld, domainCh, discoverySampleSize); err != nil {
-			log.Printf(".%s stream error: %v", tld, err)
-		}
-		close(domainCh)
-	}()
-
-	for domain := range domainCh {
-		n := atomic.AddInt64(&total, 1)
-		if n%int64(progressInterval) == 0 {
-			mu.Lock()
-			clusterCount := len(clusters)
-			mu.Unlock()
-			log.Printf(".%s discover: %dk domains resolved, %d /24 clusters", tld, n/1000, clusterCount)
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(d string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			ips := lookupA(d)
-			for _, ip := range ips {
-				prefix := ipTo24(ip)
-				if prefix == "" {
-					continue
-				}
-				mu.Lock()
-				c := clusters[prefix]
-				if c == nil {
-					c = &ipCluster{}
-					clusters[prefix] = c
-				}
-				c.count++
-				if len(c.samples) < discoverySamples {
-					c.samples = append(c.samples, d)
-				}
-				mu.Unlock()
-			}
-		}(domain)
+func reverseIPDiscovery(rdb *redis.Client) {
+	dnsHost := getenv("DNS_RESOLVER_HOSTNAME", "unbound.canyougrab.svc.cluster.local")
+	dnsPort := getenv("DNS_RESOLVER_PORT", "53")
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "udp", net.JoinHostPort(dnsHost, dnsPort))
+		},
 	}
-	wg.Wait()
-	return clusters, total
-}
 
-type discoveryEntry struct {
-	IP      string   `json:"ip"`
-	Count   int      `json:"count"`
-	Samples []string `json:"samples"`
-	Known   string   `json:"known,omitempty"`
-	CIDR    string   `json:"cidr,omitempty"`
-}
+	ctx := context.Background()
+	ticker := time.NewTicker(time.Second / reverseRate)
+	defer ticker.Stop()
 
-type discoveryReport struct {
-	TLD     string           `json:"tld"`
-	Unknown []discoveryEntry `json:"unknown"`
-	Known   []discoveryEntry `json:"known"`
-}
+	// Scan Valkey for domains flagged as parked by zone scan
+	clusters := make(map[string]*nsCluster)
+	var total, resolved, matched int64
 
-func buildDiscoveryReport(tld string, clusters map[string]*ipCluster) discoveryReport {
-	var unknown, known []discoveryEntry
-
-	for prefix, c := range clusters {
-		if c.count < discoveryMinDomains {
+	iter := rdb.Scan(ctx, 0, "dom:*", 10000).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		src, _ := rdb.HGet(ctx, key, "original_source").Result()
+		if src != "zone" {
 			continue
 		}
-		// Check if any IP in this /24 matches a known parking CIDR
-		// Use the .1 address as representative
+		cat, _ := rdb.HGet(ctx, key, "parking_category").Result()
+		if cat != "parking" && cat != "for_sale" {
+			continue
+		}
+
+		domain := strings.TrimPrefix(key, "dom:")
+		total++
+		if total%10000 == 0 {
+			log.Printf("reverse: scanned %dk parked domains, resolved %d, %d IP clusters",
+				total/1000, resolved, len(clusters))
+		}
+
+		// Rate-limited DNS resolution
+		<-ticker.C
+		lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		addrs, err := resolver.LookupIPAddr(lookupCtx, domain)
+		cancel()
+		if err != nil {
+			continue
+		}
+		resolved++
+
+		for _, addr := range addrs {
+			ip := addr.IP.To4()
+			if ip == nil {
+				continue
+			}
+
+			// Check known parking CIDRs
+			if service, ok := matchParkingIP(ip); ok {
+				rdb.HSet(ctx, key, "parked_by_ip", "true", "parking_ip_service", service)
+				matched++
+			}
+
+			// Cluster by /24
+			prefix := ipTo24(ip)
+			if prefix == "" {
+				continue
+			}
+			c := clusters[prefix]
+			if c == nil {
+				c = &nsCluster{}
+				clusters[prefix] = c
+			}
+			c.count++
+			if len(c.samples) < discoverSamples {
+				c.samples = append(c.samples, domain)
+			}
+			break // one IP per domain
+		}
+	}
+
+	// Report unknown /24 clusters
+	log.Printf("reverse: done — %d parked domains, %d resolved, %d IP-matched", total, resolved, matched)
+
+	type ipEntry struct {
+		IP      string   `json:"ip"`
+		Count   int      `json:"count"`
+		Samples []string `json:"samples"`
+		Known   string   `json:"known,omitempty"`
+	}
+	var unknown, known []ipEntry
+	for prefix, c := range clusters {
+		if c.count < discoverMinCount {
+			continue
+		}
 		_, network, _ := net.ParseCIDR(prefix)
 		repIP := make(net.IP, 4)
 		copy(repIP, network.IP.To4())
 		repIP[3] = 1
-
-		service, matched := matchParkingIP(repIP)
-		entry := discoveryEntry{
-			IP:      prefix,
-			Count:   c.count,
-			Samples: c.samples,
-		}
-		if matched {
+		service, isKnown := matchParkingIP(repIP)
+		entry := ipEntry{IP: prefix, Count: c.count, Samples: c.samples}
+		if isKnown {
 			entry.Known = service
-			entry.CIDR = prefix
 			known = append(known, entry)
 		} else {
 			unknown = append(unknown, entry)
 		}
 	}
-
-	// Sort by count descending
 	sort.Slice(unknown, func(i, j int) bool { return unknown[i].Count > unknown[j].Count })
-	sort.Slice(known, func(i, j int) bool { return known[i].Count > known[j].Count })
 
-	return discoveryReport{TLD: tld, Unknown: unknown, Known: known}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(map[string]interface{}{
+		"unknown_ip_clusters": unknown,
+		"known_ip_clusters":   known,
+		"stats": map[string]int64{
+			"parked_domains": total, "resolved": resolved, "ip_matched": matched,
+		},
+	})
 }
 
-// ── Supported TLDs ───────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────
 
 var supportedTLDs = []string{"com", "net", "org", "xyz", "info", "top", "online", "store", "shop"}
 
@@ -573,25 +588,34 @@ func main() {
 
 	// Parse flags
 	discoverMode := false
-	tlds := supportedTLDs
-	var filteredArgs []string
+	reverseMode := false
+	var tlds []string
 	for _, arg := range os.Args[1:] {
-		if arg == "--discover" {
+		switch arg {
+		case "--discover":
 			discoverMode = true
-		} else {
-			filteredArgs = append(filteredArgs, arg)
+		case "--reverse":
+			reverseMode = true
+		default:
+			tlds = append(tlds, arg)
 		}
 	}
-	if len(filteredArgs) > 0 {
-		tlds = filteredArgs
+	if len(tlds) == 0 {
+		tlds = supportedTLDs
 	}
 
-	if discoverMode {
-		log.Printf("parking-scanner starting (DISCOVERY MODE)")
-	} else {
-		log.Printf("parking-scanner starting")
+	// Reverse mode doesn't need CZDS — reads from Valkey
+	if reverseMode {
+		log.Printf("parking-scanner: REVERSE IP DISCOVERY MODE")
+		rdb := newValkeyClient()
+		if err := rdb.Ping(context.Background()).Err(); err != nil {
+			log.Fatalf("Valkey ping failed: %v", err)
+		}
+		reverseIPDiscovery(rdb)
+		return
 	}
 
+	// Forward modes need CZDS
 	czdsUser := os.Getenv("CZDS_USERNAME")
 	czdsPass := os.Getenv("CZDS_PASSWORD")
 	if czdsUser == "" || czdsPass == "" {
@@ -604,58 +628,48 @@ func main() {
 		log.Fatalf("CZDS auth failed: %v", err)
 	}
 
-	var rdb *redis.Client
-	if !discoverMode {
-		rdb = newValkeyClient()
-		if err := rdb.Ping(context.Background()).Err(); err != nil {
-			log.Fatalf("Valkey ping failed: %v", err)
-		}
-		log.Printf("Valkey connected")
-	}
-
-	totalMatches := int64(0)
-	totalDomains := 0
-	var allReports []discoveryReport
-
-	for _, tld := range tlds {
-		zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
-
-		log.Printf("Downloading .%s zone file...", tld)
-		if err := downloadZoneFile(tld, token, zonePath); err != nil {
-			log.Printf("Failed to download .%s: %v (skipping)", tld, err)
-			continue
-		}
-
-		if discoverMode {
-			log.Printf("Discovering IP clusters for .%s (streaming)...", tld)
-			clusters, count := discoverTLD(tld, zonePath)
-			totalDomains += int(count)
-			report := buildDiscoveryReport(tld, clusters)
-			allReports = append(allReports, report)
-			log.Printf(".%s: %d domains, %d unknown IPs (100+ domains), %d known parking IPs",
-				tld, count, len(report.Unknown), len(report.Known))
-		} else {
-			log.Printf("Scanning .%s for parking IPs (streaming)...", tld)
-			matched, count, elapsed := scanTLD(tld, zonePath, rdb)
-			totalDomains += int(count)
-			totalMatches += matched
-			log.Printf(".%s: %d/%d parked (%.1f%%) in %s",
-				tld, matched, count,
-				float64(matched)/float64(count)*100,
-				elapsed.Round(time.Second))
-		}
-
-		os.Remove(zonePath)
-	}
-
 	if discoverMode {
-		// Output JSON report to stdout
+		log.Printf("parking-scanner: NS DISCOVERY MODE")
+		var reports []discoveryReport
+		for _, tld := range tlds {
+			zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
+			log.Printf("Downloading .%s zone file...", tld)
+			if err := downloadZoneFile(tld, token, zonePath); err != nil {
+				log.Printf("Failed: %v (skipping)", err)
+				continue
+			}
+			reports = append(reports, discoverZoneNS(tld, zonePath))
+			os.Remove(zonePath)
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(allReports)
-		log.Printf("DONE: discovered IP clusters across %d TLDs (%d total domains)", len(tlds), totalDomains)
-	} else {
-		log.Printf("DONE: scanned %d domains across %d TLDs, found %d parked by IP",
-			totalDomains, len(tlds), totalMatches)
+		enc.Encode(reports)
+		return
 	}
+
+	// Default: Pass 1 — zone file NS scan
+	log.Printf("parking-scanner: ZONE FILE NS SCAN")
+	rdb := newValkeyClient()
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("Valkey ping failed: %v", err)
+	}
+
+	var totalParked, totalForSale, totalDomains int64
+	for _, tld := range tlds {
+		zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
+		log.Printf("Downloading .%s zone file...", tld)
+		if err := downloadZoneFile(tld, token, zonePath); err != nil {
+			log.Printf("Failed: %v (skipping)", err)
+			continue
+		}
+		p, fs, t, elapsed := scanZoneNS(tld, zonePath, rdb)
+		totalParked += p
+		totalForSale += fs
+		totalDomains += t
+		log.Printf(".%s: %d parked + %d for_sale out of %d domains in %s",
+			tld, p, fs, t, elapsed.Round(time.Second))
+		os.Remove(zonePath)
+	}
+	log.Printf("DONE: %d parked + %d for_sale across %d domains",
+		totalParked, totalForSale, totalDomains)
 }

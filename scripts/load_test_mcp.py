@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """
-MCP Server Load Test
+Load Test — exercises the full pipeline via REST API and optionally MCP.
 
-Sends concurrent tool calls to the MCP endpoint via Streamable HTTP.
-Generates a 50/50 mix of registered and unregistered domains to exercise
-both Unbound (DNS) and rust-whois (RDAP) equally.
+Sends concurrent bulk domain check requests with a configurable mix of
+registered and unregistered domains to exercise both Unbound (DNS) and
+rust-whois (RDAP) equally.
 
 Usage:
-    python3 load_test_mcp.py --url https://api.canyougrab.it/mcp \
+    # REST API (default — exercises full pipeline including workers)
+    python3 load_test_mcp.py --url https://api.canyougrab.it \
                              --api-key cyg_... \
                              --concurrency 10 \
                              --batches 20 \
                              --domains-per-batch 50
+
+    # MCP endpoint (requires OAuth token, not API key)
+    python3 load_test_mcp.py --url https://api.canyougrab.it/mcp \
+                             --mode mcp \
+                             --api-key cyg_... \
+                             --concurrency 5
 
 The test generates random unregistered .com domains (hit Unbound + rust-whois)
 and mixes in known registered domains (hit Unbound only).
@@ -84,105 +91,78 @@ class LoadTestSummary:
     end_time: float = 0.0
 
 
-async def send_mcp_check(
+async def send_rest_check(
     client: httpx.AsyncClient,
     url: str,
     api_key: str,
     domains: list[str],
     batch_id: int,
-    session_id: str,
 ) -> BatchResult:
-    """Send a single MCP tools/call request."""
+    """Send a bulk check via the REST API and poll for results."""
     t_start = time.monotonic()
-
-    # Step 1: Initialize session (required for Streamable HTTP)
-    init_payload = {
-        "jsonrpc": "2.0",
-        "method": "initialize",
-        "id": f"init-{batch_id}",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "load-test", "version": "1.0"},
-        },
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "Authorization": f"Bearer {api_key}",
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     try:
-        # Initialize
-        resp = await client.post(url, json=init_payload, headers=headers)
-        if resp.status_code not in (200, 202):
+        # Step 1: Submit bulk check
+        resp = await client.post(
+            f"{url}/api/check/bulk",
+            json={"domains": domains},
+            headers=headers,
+            timeout=45.0,
+        )
+
+        if resp.status_code != 200:
             return BatchResult(
                 batch_id=batch_id, domains=len(domains),
                 status_code=resp.status_code,
                 latency_ms=(time.monotonic() - t_start) * 1000,
-                error=f"init failed: {resp.status_code} {resp.text[:200]}",
+                error=f"submit failed: {resp.status_code} {resp.text[:200]}",
             )
 
-        # Extract session ID from response header
-        mcp_session = resp.headers.get("mcp-session-id", session_id)
+        data = resp.json()
+        job_id = data.get("job_id", "")
 
-        # Send initialized notification
-        await client.post(url, json={
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        }, headers={**headers, "mcp-session-id": mcp_session})
-
-        # Step 2: Call check_domains tool
-        tool_payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "id": f"call-{batch_id}",
-            "params": {
-                "name": "check_domains",
-                "arguments": {"domains": domains},
-            },
-        }
-
-        resp = await client.post(
-            url, json=tool_payload,
-            headers={**headers, "mcp-session-id": mcp_session},
-            timeout=60.0,
-        )
-
-        latency_ms = (time.monotonic() - t_start) * 1000
-
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                # Extract results from MCP response
-                content = data.get("result", {}).get("content", [])
-                results = []
-                for c in content:
-                    if c.get("type") == "text":
-                        try:
-                            results = json.loads(c["text"])
-                            if isinstance(results, dict):
-                                results = results.get("results", [results])
-                        except json.JSONDecodeError:
-                            pass
-                return BatchResult(
-                    batch_id=batch_id, domains=len(domains),
-                    status_code=200, latency_ms=latency_ms,
-                    results=results,
-                )
-            except Exception as e:
-                return BatchResult(
-                    batch_id=batch_id, domains=len(domains),
-                    status_code=200, latency_ms=latency_ms,
-                    error=f"parse error: {e}",
-                )
-        else:
+        if not job_id:
+            # Instant response (all cached)
+            results = data.get("results", [])
             return BatchResult(
                 batch_id=batch_id, domains=len(domains),
-                status_code=resp.status_code, latency_ms=latency_ms,
-                error=f"{resp.status_code}: {resp.text[:200]}",
+                status_code=200,
+                latency_ms=(time.monotonic() - t_start) * 1000,
+                results=results,
             )
+
+        # Step 2: Poll for completion
+        poll_url = f"{url}/api/check/bulk/{job_id}"
+        for _ in range(120):  # 60 seconds max
+            await asyncio.sleep(0.5)
+            resp = await client.get(poll_url, headers=headers, timeout=10.0)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            status = data.get("status")
+            if status == "completed":
+                results = data.get("results", [])
+                return BatchResult(
+                    batch_id=batch_id, domains=len(domains),
+                    status_code=200,
+                    latency_ms=(time.monotonic() - t_start) * 1000,
+                    results=results,
+                )
+            elif status == "failed":
+                return BatchResult(
+                    batch_id=batch_id, domains=len(domains),
+                    status_code=200,
+                    latency_ms=(time.monotonic() - t_start) * 1000,
+                    error=f"job failed: {data.get('error', 'unknown')}",
+                )
+
+        return BatchResult(
+            batch_id=batch_id, domains=len(domains),
+            status_code=0,
+            latency_ms=(time.monotonic() - t_start) * 1000,
+            error="poll timeout (60s)",
+        )
 
     except httpx.TimeoutException:
         return BatchResult(
@@ -213,15 +193,15 @@ async def run_load_test(
     summary.total_domains = batches * domains_per_batch
 
     semaphore = asyncio.Semaphore(concurrency)
-    session_id = str(uuid.uuid4())
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         async def run_batch(batch_id: int) -> BatchResult:
             async with semaphore:
                 domains = generate_batch(domains_per_batch, registered_ratio)
                 print(f"  Batch {batch_id+1:3d}/{batches} — {len(domains)} domains...", end="", flush=True)
-                result = await send_mcp_check(client, url, api_key, domains, batch_id, session_id)
-                status = "OK" if result.status_code == 200 else f"ERR({result.error[:30]})"
+                result = await send_rest_check(client, url, api_key, domains, batch_id)
+                n_results = len(result.results)
+                status = f"OK ({n_results} results)" if result.status_code == 200 and not result.error else f"ERR({result.error[:30]})"
                 print(f" {result.latency_ms:7.0f}ms {status}")
                 return result
 
@@ -297,7 +277,7 @@ def print_summary(s: LoadTestSummary):
 
 def main():
     parser = argparse.ArgumentParser(description="MCP Server Load Test")
-    parser.add_argument("--url", default="https://api.canyougrab.it/mcp", help="MCP endpoint URL")
+    parser.add_argument("--url", default="https://api.canyougrab.it", help="API base URL")
     parser.add_argument("--api-key", required=True, help="API key (cyg_...)")
     parser.add_argument("--concurrency", type=int, default=5, help="Concurrent batches (default: 5)")
     parser.add_argument("--batches", type=int, default=20, help="Total batches to send (default: 20)")
