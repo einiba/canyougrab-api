@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -408,23 +409,136 @@ func scanTLD(tld string, domains []string, rdb *redis.Client) (int64, time.Durat
 	return matched, time.Since(start)
 }
 
+// ── Discovery mode — find unknown parking IPs ────────────────────────────
+
+type ipCluster struct {
+	count   int
+	samples []string
+}
+
+const (
+	discoveryMinDomains = 100 // only report IPs hosting 100+ domains
+	discoverySamples    = 5   // sample domains per IP
+)
+
+// discoverTLD resolves A records for all domains and clusters by IP.
+// Returns a map of IP → (domain count, sample domains).
+func discoverTLD(tld string, domains []string) map[string]*ipCluster {
+	clusters := make(map[string]*ipCluster)
+	var mu sync.Mutex
+	sem := make(chan struct{}, resolverConcurrency)
+	var wg sync.WaitGroup
+
+	for _, domain := range domains {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(d string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			ips := lookupA(d)
+			for _, ip := range ips {
+				ipStr := ip.String()
+				mu.Lock()
+				c := clusters[ipStr]
+				if c == nil {
+					c = &ipCluster{}
+					clusters[ipStr] = c
+				}
+				c.count++
+				if len(c.samples) < discoverySamples {
+					c.samples = append(c.samples, d)
+				}
+				mu.Unlock()
+			}
+		}(domain)
+	}
+	wg.Wait()
+	return clusters
+}
+
+type discoveryEntry struct {
+	IP      string   `json:"ip"`
+	Count   int      `json:"count"`
+	Samples []string `json:"samples"`
+	Known   string   `json:"known,omitempty"`
+	CIDR    string   `json:"cidr,omitempty"`
+}
+
+type discoveryReport struct {
+	TLD     string           `json:"tld"`
+	Unknown []discoveryEntry `json:"unknown"`
+	Known   []discoveryEntry `json:"known"`
+}
+
+func buildDiscoveryReport(tld string, clusters map[string]*ipCluster) discoveryReport {
+	var unknown, known []discoveryEntry
+
+	for ipStr, c := range clusters {
+		if c.count < discoveryMinDomains {
+			continue
+		}
+		ip := net.ParseIP(ipStr)
+		service, matched := matchParkingIP(ip)
+		entry := discoveryEntry{
+			IP:      ipStr,
+			Count:   c.count,
+			Samples: c.samples,
+		}
+		if matched {
+			entry.Known = service
+			// Find matching CIDR for reference
+			for _, p := range parkingCIDRs {
+				if p.network.Contains(ip) {
+					entry.CIDR = p.network.String()
+					break
+				}
+			}
+			known = append(known, entry)
+		} else {
+			unknown = append(unknown, entry)
+		}
+	}
+
+	// Sort by count descending
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i].Count > unknown[j].Count })
+	sort.Slice(known, func(i, j int) bool { return known[i].Count > known[j].Count })
+
+	return discoveryReport{TLD: tld, Unknown: unknown, Known: known}
+}
+
 // ── Supported TLDs ───────────────────────────────────────────────────────
 
 var supportedTLDs = []string{"com", "net", "org", "xyz", "info", "top", "online", "store", "shop"}
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
-	log.Printf("parking-scanner starting")
+
+	// Parse flags
+	discoverMode := false
+	tlds := supportedTLDs
+	var filteredArgs []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--discover" {
+			discoverMode = true
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+	if len(filteredArgs) > 0 {
+		tlds = filteredArgs
+	}
+
+	if discoverMode {
+		log.Printf("parking-scanner starting (DISCOVERY MODE)")
+	} else {
+		log.Printf("parking-scanner starting")
+	}
 
 	czdsUser := os.Getenv("CZDS_USERNAME")
 	czdsPass := os.Getenv("CZDS_PASSWORD")
 	if czdsUser == "" || czdsPass == "" {
 		log.Fatal("CZDS_USERNAME and CZDS_PASSWORD must be set")
-	}
-
-	tlds := supportedTLDs
-	if len(os.Args) > 1 {
-		tlds = os.Args[1:]
 	}
 
 	log.Printf("Authenticating to CZDS...")
@@ -433,14 +547,18 @@ func main() {
 		log.Fatalf("CZDS auth failed: %v", err)
 	}
 
-	rdb := newValkeyClient()
-	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		log.Fatalf("Valkey ping failed: %v", err)
+	var rdb *redis.Client
+	if !discoverMode {
+		rdb = newValkeyClient()
+		if err := rdb.Ping(context.Background()).Err(); err != nil {
+			log.Fatalf("Valkey ping failed: %v", err)
+		}
+		log.Printf("Valkey connected")
 	}
-	log.Printf("Valkey connected")
 
 	totalMatches := int64(0)
 	totalDomains := 0
+	var allReports []discoveryReport
 
 	for _, tld := range tlds {
 		zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
@@ -459,18 +577,34 @@ func main() {
 			continue
 		}
 		os.Remove(zonePath)
-
 		totalDomains += len(domains)
-		log.Printf("Scanning %d .%s domains for parking IPs...", len(domains), tld)
-		matched, elapsed := scanTLD(tld, domains, rdb)
-		totalMatches += matched
 
-		log.Printf(".%s: %d/%d parked (%.1f%%) in %s",
-			tld, matched, len(domains),
-			float64(matched)/float64(len(domains))*100,
-			elapsed.Round(time.Second))
+		if discoverMode {
+			log.Printf("Discovering IP clusters for %d .%s domains...", len(domains), tld)
+			clusters := discoverTLD(tld, domains)
+			report := buildDiscoveryReport(tld, clusters)
+			allReports = append(allReports, report)
+			log.Printf(".%s: %d unknown IPs (100+ domains), %d known parking IPs",
+				tld, len(report.Unknown), len(report.Known))
+		} else {
+			log.Printf("Scanning %d .%s domains for parking IPs...", len(domains), tld)
+			matched, elapsed := scanTLD(tld, domains, rdb)
+			totalMatches += matched
+			log.Printf(".%s: %d/%d parked (%.1f%%) in %s",
+				tld, matched, len(domains),
+				float64(matched)/float64(len(domains))*100,
+				elapsed.Round(time.Second))
+		}
 	}
 
-	log.Printf("DONE: scanned %d domains across %d TLDs, found %d parked by IP",
-		totalDomains, len(tlds), totalMatches)
+	if discoverMode {
+		// Output JSON report to stdout
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(allReports)
+		log.Printf("DONE: discovered IP clusters across %d TLDs (%d total domains)", len(tlds), totalDomains)
+	} else {
+		log.Printf("DONE: scanned %d domains across %d TLDs, found %d parked by IP",
+			totalDomains, len(tlds), totalMatches)
+	}
 }
