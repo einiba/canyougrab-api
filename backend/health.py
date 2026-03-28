@@ -497,7 +497,43 @@ def health_deep():
             latency_ms = round((time.monotonic() - t0) * 1000)
             steps["enrichment"] = {"status": "error", "latency_ms": latency_ms, "error": str(e)}
 
-        # Step 5: MCP server check — must return HTTP 200
+        # Step 5: Sale probe check — verify rust-whois /probe endpoint works
+        t0 = time.monotonic()
+        try:
+            import socket
+            whois_ip = socket.gethostbyname(WHOIS_HOSTNAME)
+            probe_url = f"http://{whois_ip}:{WHOIS_PORT}/probe/sedo.com"
+            probe_resp = httpx.get(probe_url, timeout=5.0)
+            latency_ms = round((time.monotonic() - t0) * 1000)
+
+            if probe_resp.status_code == 200:
+                probe_data = probe_resp.json()
+                probe_errors = []
+
+                # Verify response shape
+                if "for_sale" not in probe_data:
+                    probe_errors.append("missing for_sale field")
+                if "signals" not in probe_data:
+                    probe_errors.append("missing signals field")
+
+                if probe_errors:
+                    steps["sale_probe"] = {"status": "degraded", "latency_ms": latency_ms, "errors": probe_errors}
+                else:
+                    steps["sale_probe"] = {
+                        "status": "ok",
+                        "latency_ms": latency_ms,
+                        "for_sale": probe_data.get("for_sale"),
+                        "platform": probe_data.get("platform"),
+                        "signal_count": len(probe_data.get("signals", [])),
+                    }
+            else:
+                steps["sale_probe"] = {"status": "error", "latency_ms": latency_ms, "error": f"HTTP {probe_resp.status_code}"}
+
+        except Exception as e:
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            steps["sale_probe"] = {"status": "degraded", "latency_ms": latency_ms, "error": str(e)}
+
+        # Step 6: MCP server check — must return HTTP 200
         mcp_result = _check_mcp()
         steps["mcp_server"] = mcp_result
         if mcp_result["status"] != "ok":
