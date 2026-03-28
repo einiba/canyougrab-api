@@ -26,7 +26,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"sort"
@@ -35,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	spacespkg "github.com/ericismaking/canyougrab-api/internal/spaces"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -124,41 +124,19 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-// ── CZDS auth + download ─────────────────────────────────────────────────
+// ── Zone file download (from DO Spaces) ──────────────────────────────────
 
-func czdsAuthenticate(username, password string) (string, error) {
-	payload, _ := json.Marshal(map[string]string{"username": username, "password": password})
-	resp, err := http.Post("https://account-api.icann.org/api/authenticate", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	var result struct{ AccessToken string `json:"accessToken"` }
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result.AccessToken, nil
-}
+var spacesClient *spacespkg.Client
 
-func downloadZoneFile(tld, token, destPath string) error {
-	req, _ := http.NewRequest("GET", fmt.Sprintf("https://czds-download-api.icann.org/czds/downloads/%s.zone", tld), nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := (&http.Client{Timeout: 30 * time.Minute}).Do(req)
-	if err != nil {
-		return err
+func downloadZoneFile(tld, destPath string) error {
+	if spacesClient == nil {
+		var err error
+		spacesClient, err = spacespkg.NewClient()
+		if err != nil {
+			return fmt.Errorf("spaces client: %w", err)
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	f, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	return spacesClient.DownloadZoneFile(tld, destPath)
 }
 
 // ── Valkey client ────────────────────────────────────────────────────────
@@ -651,26 +629,14 @@ func main() {
 		return
 	}
 
-	// Forward modes need CZDS
-	czdsUser := os.Getenv("CZDS_USERNAME")
-	czdsPass := os.Getenv("CZDS_PASSWORD")
-	if czdsUser == "" || czdsPass == "" {
-		log.Fatal("CZDS_USERNAME and CZDS_PASSWORD must be set")
-	}
-
-	log.Printf("Authenticating to CZDS...")
-	token, err := czdsAuthenticate(czdsUser, czdsPass)
-	if err != nil {
-		log.Fatalf("CZDS auth failed: %v", err)
-	}
-
+	// Forward modes download from DO Spaces (zone-sync populates it from CZDS)
 	if discoverMode {
 		log.Printf("parking-scanner: NS DISCOVERY MODE")
 		var reports []discoveryReport
 		for _, tld := range tlds {
 			zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
 			log.Printf("Downloading .%s zone file...", tld)
-			if err := downloadZoneFile(tld, token, zonePath); err != nil {
+			if err := downloadZoneFile(tld, zonePath); err != nil {
 				log.Printf("Failed: %v (skipping)", err)
 				continue
 			}
@@ -694,7 +660,7 @@ func main() {
 	for _, tld := range tlds {
 		zonePath := fmt.Sprintf("/tmp/%s.zone.gz", tld)
 		log.Printf("Downloading .%s zone file...", tld)
-		if err := downloadZoneFile(tld, token, zonePath); err != nil {
+		if err := downloadZoneFile(tld, zonePath); err != nil {
 			log.Printf("Failed: %v (skipping)", err)
 			continue
 		}

@@ -3,6 +3,7 @@ module github.com/ericismaking/canyougrab-api
 go 1.22
 
 require (
+	github.com/aws/aws-sdk-go v1.55.5
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/zeebo/xxh3 v1.0.2
 )

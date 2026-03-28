@@ -1,16 +1,18 @@
 # Multi-purpose image: API server, MCP server, and RQ workers.
 # Override CMD per workload in K8s deployment spec.
 
-# ── Stage 1: Build Go bloom-builder binary ──────────────────────────────────
+# ── Stage 1: Build Go binaries ───────────────────────────────────────────
 FROM golang:1.22-alpine AS go-builder
 WORKDIR /build
 COPY go.mod ./
 COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/ && \
     GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker ./cmd/worker/ && \
-    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /parking-scanner ./cmd/parking-scanner/
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /parking-scanner ./cmd/parking-scanner/ && \
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /zone-sync ./cmd/zone-sync/
 
-# ── Stage 2: Python runtime ──────────────────────────────────────────────────
+# ── Stage 2: Python runtime ──────────────────────────────────────────────
 FROM python:3.12-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,13 +32,13 @@ COPY backend/ /app/
 COPY scripts/ /app/scripts/
 
 # Copy OpenAPI spec (served by the API at /api-reference/openapi.json)
-# _resolve_repo_file looks at parent.parent of /app/app.py = /
 COPY portal/config/routes.oas.json /portal/config/routes.oas.json
 
 # Copy compiled Go binaries
 COPY --from=go-builder /bloom-builder /app/bloom-builder
 COPY --from=go-builder /worker /app/worker
 COPY --from=go-builder /parking-scanner /app/parking-scanner
+COPY --from=go-builder /zone-sync /app/zone-sync
 
 EXPOSE 8000 8001
 

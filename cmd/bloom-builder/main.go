@@ -13,12 +13,9 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -26,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	spaces "github.com/ericismaking/canyougrab-api/internal/spaces"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeebo/xxh3"
 )
@@ -89,65 +87,19 @@ func getBit(bitfield []byte, pos uint64) bool {
 	return (bitfield[byteIdx]>>bitIdx)&1 == 1
 }
 
-// ── CZDS authentication ───────────────────────────────────────────────────
+// ── Zone file download (from DO Spaces) ──────────────────────────────────
 
-func czdsAuthenticate(username, password string) (string, error) {
-	payload, _ := json.Marshal(map[string]string{
-		"username": username,
-		"password": password,
-	})
-	resp, err := http.Post(
-		"https://account-api.icann.org/api/authenticate",
-		"application/json",
-		bytes.NewReader(payload),
-	)
-	if err != nil {
-		return "", fmt.Errorf("czds auth request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("czds auth failed: HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("czds auth decode: %w", err)
-	}
-	if result.AccessToken == "" {
-		return "", fmt.Errorf("czds auth: empty token")
-	}
-	return result.AccessToken, nil
-}
+var spacesClient *spaces.Client
 
-// ── Zone file download ────────────────────────────────────────────────────
-
-func downloadZoneFile(tld, token, destPath string) (int64, error) {
-	zoneURL := fmt.Sprintf("https://czds-download-api.icann.org/czds/downloads/%s.zone", tld)
-	req, _ := http.NewRequest("GET", zoneURL, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("download zone: %w", err)
+func downloadZoneFile(tld, destPath string) error {
+	if spacesClient == nil {
+		var err error
+		spacesClient, err = spaces.NewClient()
+		if err != nil {
+			return fmt.Errorf("spaces client: %w", err)
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("download zone: HTTP %d", resp.StatusCode)
-	}
-
-	f, err := os.Create(destPath)
-	if err != nil {
-		return 0, fmt.Errorf("create zone file: %w", err)
-	}
-	defer f.Close()
-
-	n, err := io.Copy(f, resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("write zone file: %w", err)
-	}
-	return n, nil
+	return spacesClient.DownloadZoneFile(tld, destPath)
 }
 
 // ── Zone file parsing ─────────────────────────────────────────────────────
@@ -339,8 +291,6 @@ var estimatedCounts = map[string]int{
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
 
-	czdsUser := os.Getenv("CZDS_USERNAME")
-	czdsPass := os.Getenv("CZDS_PASSWORD")
 	valkeyURL := os.Getenv("VALKEY_URL") // redis://:password@host:port
 	if valkeyURL == "" {
 		// Build from individual env vars (matches Python zone_bloom_builder.py)
@@ -355,10 +305,6 @@ func main() {
 			user = "default"
 		}
 		valkeyURL = fmt.Sprintf("rediss://%s:%s@%s:%s", url.QueryEscape(user), url.QueryEscape(pass), host, port)
-	}
-
-	if czdsUser == "" || czdsPass == "" {
-		log.Fatal("CZDS_USERNAME and CZDS_PASSWORD must be set")
 	}
 
 	// Parse TLD list from args, defaulting to all supported TLDs
@@ -379,14 +325,6 @@ func main() {
 	}
 	log.Printf("[zone-builder] Valkey connected")
 
-	// Authenticate with CZDS
-	log.Printf("[zone-builder] Authenticating with CZDS...")
-	token, err := czdsAuthenticate(czdsUser, czdsPass)
-	if err != nil {
-		log.Fatalf("czds auth: %v", err)
-	}
-	log.Printf("[zone-builder] CZDS authenticated")
-
 	workDir, _ := os.MkdirTemp("", "zone-bloom-*")
 	defer os.RemoveAll(workDir)
 
@@ -399,11 +337,15 @@ func main() {
 
 		// Download zone file
 		zonePath := filepath.Join(workDir, tld+".zone.gz")
-		log.Printf("[zone-builder] Downloading .%s zone file...", tld)
-		fileBytes, err := downloadZoneFile(tld, token, zonePath)
-		if err != nil {
+		log.Printf("[zone-builder] Downloading .%s zone file from Spaces...", tld)
+		if err := downloadZoneFile(tld, zonePath); err != nil {
 			log.Printf("[zone-builder] ERROR downloading .%s: %v", tld, err)
 			continue
+		}
+		stat, _ := os.Stat(zonePath)
+		fileBytes := int64(0)
+		if stat != nil {
+			fileBytes = stat.Size()
 		}
 		fileMB := float64(fileBytes) / 1024 / 1024
 		log.Printf("[zone-builder] .%s zone file downloaded: %.1f MB", tld, fileMB)
