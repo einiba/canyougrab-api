@@ -169,6 +169,12 @@ func checkCache(ctx context.Context, rdb *redis.Client, domain string) map[strin
 			result["nameservers"] = nsArr
 		}
 	}
+	if fs, ok := data["for_sale"]; ok && fs != "" {
+		result["for_sale_probed"] = fs // "true" or "false"
+	}
+	if sp, ok := data["sale_platform"]; ok && sp != "" {
+		result["sale_platform_probed"] = sp
+	}
 	return result
 }
 
@@ -350,6 +356,78 @@ func checkWHOIS(domain string) map[string]interface{} {
 	}
 }
 
+// ── Sale probe (background) ──────────────────────────────────────────────
+
+// Parking NS base domains — domains on these nameservers get a background HTTP probe
+// to determine if they're listed for sale or just parked for ads.
+var parkingNSBases = map[string]bool{
+	"sedoparking.com": true, "parkingcrew.net": true, "above.com": true,
+	"bodis.com": true, "cashparking.com": true, "smartname.com": true,
+	"parklogic.com": true, "voodoo.com": true, "dsredirection.com": true,
+	"domainnamesales.com": true, "parkpage.com": true, "ztomy.com": true,
+	"namedrive.com": true, "skenzo.com": true, "trafficz.com": true,
+}
+
+// isParkingNS checks if any of the nameservers belong to a known parking service.
+func isParkingNS(nameservers []string) bool {
+	for _, ns := range nameservers {
+		ns = strings.ToLower(strings.TrimRight(ns, "."))
+		parts := strings.Split(ns, ".")
+		if len(parts) >= 2 {
+			base := strings.Join(parts[len(parts)-2:], ".")
+			if parkingNSBases[base] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var probeHTTP = &http.Client{Timeout: 4 * time.Second}
+
+type probeResponse struct {
+	ForSale  *bool  `json:"for_sale"`
+	Platform string `json:"platform"`
+}
+
+// backgroundProbeForSale calls rust-whois /probe/{domain} and writes the result
+// to the Valkey dom:{domain} cache hash.  Fire-and-forget from checkDomain.
+func backgroundProbeForSale(rdb *redis.Client, domain string) {
+	ctx := context.Background()
+	url := fmt.Sprintf("http://%s:%s/probe/%s", whoisHost, whoisPort, domain)
+
+	resp, err := probeHTTP.Get(url)
+	if err != nil {
+		return // probe failed silently — next request will retry
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	var pr probeResponse
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return
+	}
+
+	// Write probe result to cache
+	if pr.ForSale != nil {
+		val := "false"
+		if *pr.ForSale {
+			val = "true"
+		}
+		rdb.HSet(ctx, "dom:"+domain, "for_sale", val)
+		if pr.Platform != "" {
+			rdb.HSet(ctx, "dom:"+domain, "sale_platform", pr.Platform)
+		}
+	}
+}
+
 // ── TOS coverage check ───────────────────────────────────────────────────
 
 const tosCoveredKey = "tos:covered_tlds"
@@ -428,6 +506,12 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 		}
 		nsCancel()
 		writeCacheResult(ctx, rdb, domain, result)
+
+		// Background: if parking NS detected, probe for sale status
+		if ns, ok := result["nameservers"].([]string); ok && isParkingNS(ns) {
+			go backgroundProbeForSale(rdb, domain)
+		}
+
 		return result
 	}
 
@@ -438,6 +522,12 @@ func checkDomain(ctx context.Context, rdb *redis.Client, domain string) map[stri
 	// Domain is registered — no need for WHOIS
 	if available == false {
 		writeCacheResult(ctx, rdb, domain, dnsResult)
+
+		// Background: if parking NS detected, probe for sale status
+		if ns, ok := dnsResult["nameservers"].([]string); ok && isParkingNS(ns) {
+			go backgroundProbeForSale(rdb, domain)
+		}
+
 		return dnsResult
 	}
 

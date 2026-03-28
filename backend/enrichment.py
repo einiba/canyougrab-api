@@ -202,8 +202,19 @@ def enrich_results(results: list[dict]) -> list[dict]:
             provider, parked, for_sale = None, False, False
 
         r['parked'] = parked
-        r['for_sale'] = for_sale
         r['hosting_provider'] = provider if provider and provider != 'unknown' else None
+
+        # Override for_sale with probe result if available (from background HTTP probe)
+        probed_for_sale = r.get('for_sale_probed')
+        probed_platform = r.get('sale_platform_probed')
+        if probed_for_sale == 'true':
+            for_sale = True
+            if probed_platform:
+                provider = probed_platform
+        elif probed_for_sale == 'false':
+            for_sale = False
+
+        r['for_sale'] = for_sale
 
         # Sale platform + URL for parking and marketplace services
         if parked and provider and provider != 'unknown':
@@ -212,6 +223,10 @@ def enrich_results(results: list[dict]) -> list[dict]:
         else:
             r['sale_platform'] = None
             r['sale_url'] = None
+
+        # Clean up internal probe fields
+        r.pop('for_sale_probed', None)
+        r.pop('sale_platform_probed', None)
 
         # Domain age + expiry
         reg = r.get('registration')
