@@ -10,7 +10,8 @@ COPY internal/ ./internal/
 RUN GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bloom-builder ./cmd/bloom-builder/ && \
     GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker ./cmd/worker/ && \
     GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /parking-scanner ./cmd/parking-scanner/ && \
-    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /zone-sync ./cmd/zone-sync/
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /zone-sync ./cmd/zone-sync/ && \
+    GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /parking-validator ./cmd/parking-validator/
 
 # ── Stage 2: Python runtime ──────────────────────────────────────────────
 FROM python:3.12-slim AS base
@@ -38,6 +39,7 @@ COPY portal/config/routes.oas.json /portal/config/routes.oas.json
 COPY --from=go-builder /bloom-builder /app/bloom-builder
 COPY --from=go-builder /worker /app/worker
 COPY --from=go-builder /parking-scanner /app/parking-scanner
+COPY --from=go-builder /parking-validator /app/parking-validator
 COPY --from=go-builder /zone-sync /app/zone-sync
 
 EXPOSE 8000 8001
