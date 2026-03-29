@@ -39,9 +39,8 @@ jobs:
       - name: Build and push API image
         run: |
           SHA=$(git rev-parse --short HEAD)
-          docker pull $REGISTRY/api:prod-latest || true
           docker build \
-            --cache-from $REGISTRY/api:prod-latest \
+            --no-cache \
             -t $REGISTRY/api:prod-$SHA \
             -t $REGISTRY/api:prod-latest \
             .
