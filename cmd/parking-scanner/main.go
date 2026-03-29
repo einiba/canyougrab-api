@@ -188,8 +188,6 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 	var currentNS []string
 	count := 0
 	lineCount := 0
-	nsLineCount := 0
-	debugSamples := 0
 
 	flush := func() {
 		if currentSLD != "" && len(currentNS) > 0 {
@@ -203,14 +201,6 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 		line := scanner.Bytes()
 		lineCount++
 
-		// Log first 5 non-comment lines for format debugging
-		if lineCount <= 200 && len(line) > 0 && line[0] != ';' && line[0] != '$' {
-			if debugSamples < 5 {
-				debugSamples++
-				log.Printf(".%s DEBUG line %d: %q", tld, lineCount, string(line[:min(len(line), 200)]))
-			}
-		}
-
 		if len(line) == 0 || line[0] == ';' || line[0] == '$' || line[0] == ' ' || line[0] == '\t' {
 			continue
 		}
@@ -221,22 +211,17 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 			continue
 		}
 
-		// Find "NS" field — it's typically field[2] or field[3] depending on
-		// whether TTL is present: "domain TTL IN NS target" or "domain IN NS target"
+		// Find "ns" field (lowercase in zone files) — typically field[3] after "domain TTL in ns target"
 		nsIdx := -1
 		for i := 1; i < len(fields)-1; i++ {
-			if bytes.Equal(fields[i], []byte("NS")) {
+			if bytes.EqualFold(fields[i], []byte("ns")) {
 				nsIdx = i
 				break
 			}
 		}
 		if nsIdx < 0 || nsIdx >= len(fields)-1 {
-			if nsLineCount == 0 && lineCount%1000000 == 0 {
-				log.Printf(".%s: %dM lines scanned, still 0 NS records found", tld, lineCount/1000000)
-			}
 			continue
 		}
-		nsLineCount++
 
 		// First field is the domain — may be FQDN (google.net.) or relative (google)
 		domainStr := strings.ToLower(strings.TrimRight(string(fields[0]), "."))
