@@ -74,20 +74,34 @@ type domainInfo struct {
 	Provider string
 }
 
-func collectDomains(rdb *redis.Client, filterCategory string) []domainInfo {
+func collectDomains(rdb *redis.Client, filterCategory string, targetCount int) []domainInfo {
 	ctx := context.Background()
 	var domains []domainInfo
-	scanned := 0
+	seen := make(map[string]bool)
+	attempts := 0
+	maxAttempts := targetCount * 5 // give up after 5x attempts
 
-	iter := rdb.Scan(ctx, 0, "dom:*", 10000).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-		scanned++
-		if scanned%100000 == 0 {
-			log.Printf("Scanning Valkey: %dk keys checked, %d parking/sale found", scanned/1000, len(domains))
+	log.Printf("Sampling %d domains via RANDOMKEY...", targetCount)
+
+	for len(domains) < targetCount && attempts < maxAttempts {
+		attempts++
+
+		key, err := rdb.RandomKey(ctx).Result()
+		if err != nil {
+			continue
 		}
+		if !strings.HasPrefix(key, "dom:") || seen[key] {
+			continue
+		}
+		seen[key] = true
 
-		cat, err := rdb.HGet(ctx, key, "parking_category").Result()
+		// Pipeline: get both fields in one round trip
+		pipe := rdb.Pipeline()
+		catCmd := pipe.HGet(ctx, key, "parking_category")
+		provCmd := pipe.HGet(ctx, key, "parking_provider")
+		pipe.Exec(ctx)
+
+		cat, err := catCmd.Result()
 		if err != nil || cat == "" {
 			continue
 		}
@@ -95,7 +109,7 @@ func collectDomains(rdb *redis.Client, filterCategory string) []domainInfo {
 			continue
 		}
 
-		provider, _ := rdb.HGet(ctx, key, "parking_provider").Result()
+		provider, _ := provCmd.Result()
 		domain := strings.TrimPrefix(key, "dom:")
 
 		domains = append(domains, domainInfo{
@@ -103,9 +117,13 @@ func collectDomains(rdb *redis.Client, filterCategory string) []domainInfo {
 			Category: cat,
 			Provider: provider,
 		})
+
+		if len(domains)%1000 == 0 {
+			log.Printf("Collected %d/%d domains (%d attempts)", len(domains), targetCount, attempts)
+		}
 	}
 
-	log.Printf("Found %d domains with parking_category (scanned %d keys)", len(domains), scanned)
+	log.Printf("Collected %d domains in %d attempts", len(domains), attempts)
 	return domains
 }
 
@@ -241,20 +259,12 @@ func main() {
 		log.Fatalf("Valkey: %v", err)
 	}
 
-	// Step 1: Collect domains
-	log.Printf("Collecting domains from Valkey...")
-	allDomains := collectDomains(rdb, filterCategory)
-	if len(allDomains) == 0 {
+	// Step 1: Sample domains directly (RANDOMKEY is fast, no full scan)
+	sample := collectDomains(rdb, filterCategory, count)
+	if len(sample) == 0 {
 		log.Fatal("No domains found with parking_category field")
 	}
-
-	// Step 2: Sample
-	if count > len(allDomains) {
-		count = len(allDomains)
-	}
-	rand.Shuffle(len(allDomains), func(i, j int) { allDomains[i], allDomains[j] = allDomains[j], allDomains[i] })
-	sample := allDomains[:count]
-	log.Printf("Sampled %d domains (of %d total)", count, len(allDomains))
+	count = len(sample)
 
 	// Step 3: Probe at controlled rate
 	ticker := time.NewTicker(time.Second / time.Duration(rate))
