@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/url"
@@ -180,7 +179,6 @@ func streamNSRecords(zonePath, tld string, out chan<- domainNS) error {
 	}
 	defer gz.Close()
 
-	suffix := "." + tld + "."
 	scanner := bufio.NewScanner(gz)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
