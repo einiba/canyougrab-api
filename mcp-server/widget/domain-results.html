@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CanYouGrab.it — Domain Results</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a2e;
+      background: #f8f9fa;
+      padding: 16px;
+    }
+
+    .widget {
+      max-width: 480px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+      overflow: hidden;
+    }
+
+    .widget-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #e9ecef;
+    }
+
+    .widget-header svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .widget-header span {
+      font-size: 13px;
+      font-weight: 600;
+      color: #6c757d;
+      letter-spacing: 0.02em;
+    }
+
+    .domain-row {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f3f5;
+      gap: 12px;
+    }
+
+    .domain-row:last-child { border-bottom: none; }
+
+    .status-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 14px;
+    }
+
+    .status-icon.available { background: #d3f9d8; color: #2b8a3e; }
+    .status-icon.taken { background: #ffe3e3; color: #c92a2a; }
+    .status-icon.unknown { background: #fff3bf; color: #e67700; }
+
+    .domain-info { flex: 1; min-width: 0; }
+
+    .domain-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1a1a2e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .domain-meta {
+      font-size: 12px;
+      color: #868e96;
+      margin-top: 2px;
+    }
+
+    .confidence-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .confidence-badge.high { background: #d3f9d8; color: #2b8a3e; }
+    .confidence-badge.medium { background: #fff3bf; color: #e67700; }
+    .confidence-badge.low { background: #ffe3e3; color: #c92a2a; }
+
+    .register-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 14px;
+      background: #228be6;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .register-btn:hover { background: #1c7ed6; }
+
+    .tld-badges {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      border-top: 1px solid #f1f3f5;
+    }
+
+    .tld-badge {
+      padding: 2px 8px;
+      background: #e9ecef;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #495057;
+    }
+
+    .tld-badge.checked { background: #d3f9d8; color: #2b8a3e; }
+
+    .widget-footer {
+      padding: 10px 16px;
+      background: #f8f9fa;
+      border-top: 1px solid #e9ecef;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .widget-footer a {
+      font-size: 11px;
+      color: #868e96;
+      text-decoration: none;
+    }
+
+    .widget-footer a:hover { color: #495057; }
+  </style>
+</head>
+<body>
+
+<div class="widget" id="domain-widget">
+  <!-- Populated by JavaScript -->
+</div>
+
+<script>
+/**
+ * CanYouGrab.it ChatGPT UI Widget
+ *
+ * Renders domain availability results as interactive cards.
+ * Designed for MCP Apps standard integration.
+ *
+ * Usage:
+ *   renderDomainResults(container, { results: [...] })
+ */
+
+const NAMECHEAP_AFFILIATE_BASE = 'https://www.namecheap.com/domains/registration/results/?domain=';
+
+function renderDomainResults(container, data) {
+  const results = data.results || [];
+  if (!results.length) {
+    container.innerHTML = '<p style="padding:16px;color:#868e96;">No results to display.</p>';
+    return;
+  }
+
+  const tlds = [...new Set(results.map(r => '.' + r.domain.split('.').pop()))];
+
+  let html = `
+    <div class="widget-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#6c757d" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <span>DOMAIN AVAILABILITY</span>
+    </div>
+  `;
+
+  for (const r of results) {
+    const available = r.available;
+    const confidence = r.confidence || 'unknown';
+    let statusClass, statusIcon, statusText;
+
+    if (available === true) {
+      statusClass = 'available';
+      statusIcon = '&#10003;';
+      statusText = 'Available';
+    } else if (available === false) {
+      statusClass = 'taken';
+      statusIcon = '&#10007;';
+      statusText = 'Taken';
+    } else {
+      statusClass = 'unknown';
+      statusIcon = '?';
+      statusText = 'Unknown';
+    }
+
+    const registerLink = available === true
+      ? `<a class="register-btn" href="${NAMECHEAP_AFFILIATE_BASE}${encodeURIComponent(r.domain)}" target="_blank" rel="noopener">Register</a>`
+      : '';
+
+    const regInfo = r.registration
+      ? `${r.registration.registrar || ''} &middot; expires ${r.registration.expires || 'N/A'}`
+      : statusText;
+
+    html += `
+      <div class="domain-row">
+        <div class="status-icon ${statusClass}">${statusIcon}</div>
+        <div class="domain-info">
+          <div class="domain-name">${escapeHtml(r.domain)}</div>
+          <div class="domain-meta">
+            ${regInfo}
+            <span class="confidence-badge ${confidence}">${confidence}</span>
+          </div>
+        </div>
+        ${registerLink}
+      </div>
+    `;
+  }
+
+  if (tlds.length > 1) {
+    html += '<div class="tld-badges">';
+    for (const tld of tlds) {
+      html += `<span class="tld-badge checked">${escapeHtml(tld)}</span>`;
+    }
+    html += '</div>';
+  }
+
+  html += `
+    <div class="widget-footer">
+      <a href="https://canyougrab.it" target="_blank" rel="noopener">Powered by canyougrab.it</a>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Demo data for preview
+const demoData = {
+  results: [
+    { domain: 'coolstartup.com', available: false, confidence: 'high', source: 'dns', registration: { registrar: 'GoDaddy.com, LLC', expires: '2027-06-12' } },
+    { domain: 'coolstartup.io', available: true, confidence: 'high', source: 'whois' },
+    { domain: 'coolstartup.dev', available: true, confidence: 'high', source: 'dns' },
+    { domain: 'coolstartup.app', available: null, confidence: 'low', source: 'dns' },
+  ]
+};
+
+renderDomainResults(document.getElementById('domain-widget'), demoData);
+</script>
+
+</body>
+</html>

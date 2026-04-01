@@ -320,6 +320,41 @@ def api_plans():
     ]
 
 
+@app.get('/api/domain-info/{domain}')
+async def api_domain_info(
+    domain: str,
+    user: APIKeyUser = Depends(domains_read_auth),
+):
+    """Return WHOIS/RDAP information for a registered domain.
+
+    Proxies to the internal rust-whois service and returns structured
+    registrar, dates, nameserver, and status data.
+    """
+    from whois_client import check_domain_whois
+
+    domain = domain.strip().lower()
+    if not domain or '.' not in domain:
+        return JSONResponse({'error': 'Invalid domain name'}, status_code=400)
+
+    result = await asyncio.to_thread(check_domain_whois, domain)
+    if result is None:
+        return JSONResponse(
+            {'error': 'WHOIS lookup failed', 'message': 'Could not retrieve domain information. The WHOIS server may be unavailable.'},
+            status_code=502,
+        )
+
+    return {
+        'domain': domain,
+        'registrar': result.get('registrar'),
+        'created_date': result.get('creation_date'),
+        'expiry_date': result.get('expiration_date'),
+        'updated_date': result.get('updated_date'),
+        'nameservers': result.get('name_servers'),
+        'status': result.get('status'),
+        'source': result.get('lookup_source', 'rdap'),
+    }
+
+
 @app.get('/health')
 def health():
     return {'status': 'ok'}

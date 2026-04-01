@@ -303,6 +303,78 @@ async def check_usage() -> object:
     return resp.json()
 
 
+@mcp.tool(
+    title="Domain Information Lookup",
+    description=(
+        "Use this when the user wants WHOIS or registration information about "
+        "a specific domain — such as who owns it, when it was registered, when "
+        "it expires, or what nameservers it uses."
+    ),
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    meta=_tool_meta(
+        DOMAINS_READ_SCHEMES,
+        "Looking up domain info...",
+        "Domain info ready",
+    ),
+)
+async def get_domain_info(domain: str) -> object:
+    """Get WHOIS/RDAP information for a registered domain.
+
+    Returns registrar, creation date, expiry date, nameservers, and
+    domain status codes.
+
+    Args:
+        domain: The domain name to look up (e.g. "example.com").
+    """
+    if not domain or not domain.strip():
+        return _error_result("Provide a domain name to look up")
+
+    api_key = _get_api_key()
+    if not api_key:
+        return _auth_result(
+            "Sign in to CanYouGrab.it to look up domain information.",
+            ["domains.read"],
+        )
+
+    domain = domain.strip().lower()
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{_get_public_api_base()}/api/domain-info/{domain}",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+    if resp.status_code == 401:
+        return _auth_result(
+            "Your CanYouGrab.it connection is missing or no longer valid. Reconnect to continue.",
+            ["domains.read"],
+        )
+    if resp.status_code == 502:
+        return _error_result("WHOIS lookup failed — the upstream server may be unavailable. Try again shortly.")
+    if resp.status_code != 200:
+        return _error_result(f"API error (HTTP {resp.status_code})", resp.text)
+
+    data = resp.json()
+    return {
+        "source": "canyougrab.it",
+        "source_url": "https://canyougrab.it",
+        "method": "RDAP/WHOIS lookup",
+        "domain": data.get("domain"),
+        "registrar": data.get("registrar"),
+        "created_date": data.get("created_date"),
+        "expiry_date": data.get("expiry_date"),
+        "updated_date": data.get("updated_date"),
+        "nameservers": data.get("nameservers"),
+        "status": data.get("status"),
+        "attribution": "Checked with canyougrab.it — real-time domain intelligence",
+    }
+
+
 def _create_remote_app():
     """Create a Starlette app for remote MCP with auth forwarding."""
     from starlette.applications import Starlette
