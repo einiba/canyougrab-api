@@ -28,7 +28,7 @@ Real-time, confidence-scored domain availability checking for AI agents. Solves 
 ### Links
 - Website: https://canyougrab.it
 - PyPI: https://pypi.org/project/mcp-server-canyougrab/
-- GitHub: https://github.com/ericismaking/canyougrab-api
+- GitHub: https://github.com/einiba/canyougrab-api
 - Privacy Policy: https://canyougrab.it/privacy
 
 ---
@@ -42,9 +42,9 @@ Real-time, confidence-scored domain availability checking for AI agents. Solves 
 ```yaml
 name: canyougrab
 description: Real-time domain availability checking with confidence scoring via DNS + WHOIS
-author: ericismaking
+author: einiba
 homepage: https://canyougrab.it
-repository: https://github.com/ericismaking/canyougrab-api
+repository: https://github.com/einiba/canyougrab-api
 license: MIT
 categories:
   - utilities
@@ -64,7 +64,7 @@ install:
 
 **Server Name:** CanYouGrab.it
 **Description:** Real-time, confidence-scored domain availability checking for AI agents. Live DNS + WHOIS lookups with high/medium/low confidence ratings. Checks up to 100 domains per request. All tools are read-only and safe.
-**Repository URL:** https://github.com/ericismaking/canyougrab-api
+**Repository URL:** https://github.com/einiba/canyougrab-api
 **Package:** mcp-server-canyougrab (PyPI)
 **Remote URL:** https://api.canyougrab.it/mcp
 
@@ -77,7 +77,7 @@ install:
 **Long Description:** AI assistants cannot check domain availability — they guess, and they're usually wrong. CanYouGrab.it fixes this with real-time DNS + WHOIS lookups that include confidence scoring. Every result is rated high/medium/low so the agent knows how reliable the answer is. Supports bulk checking (up to 100 domains), WHOIS lookups, and quota monitoring. All tools are read-only with correct MCP safety annotations.
 **Category:** Developer Tools / Utilities
 **Website:** https://canyougrab.it
-**Repository:** https://github.com/ericismaking/canyougrab-api
+**Repository:** https://github.com/einiba/canyougrab-api
 **Install:** `uvx mcp-server-canyougrab` or remote at `https://api.canyougrab.it/mcp`
 
 ---
@@ -89,7 +89,7 @@ install:
 **Entry to add:**
 
 ```markdown
-- [CanYouGrab.it](https://github.com/ericismaking/canyougrab-api) - Real-time domain availability checking with confidence scoring via DNS + WHOIS. Bulk check up to 100 domains, WHOIS lookups, quota monitoring. [PyPI](https://pypi.org/project/mcp-server-canyougrab/)
+- [CanYouGrab.it](https://github.com/einiba/canyougrab-api) - Real-time domain availability checking with confidence scoring via DNS + WHOIS. Bulk check up to 100 domains, WHOIS lookups, quota monitoring. [PyPI](https://pypi.org/project/mcp-server-canyougrab/)
 ```
 
 ---
@@ -101,7 +101,7 @@ install:
 **Entry:**
 
 ```markdown
-- **[CanYouGrab.it](https://github.com/ericismaking/canyougrab-api)** - Confidence-scored domain availability checking via live DNS + WHOIS lookups
+- **[CanYouGrab.it](https://github.com/einiba/canyougrab-api)** - Confidence-scored domain availability checking via live DNS + WHOIS lookups
 ```
 
 ---
@@ -111,8 +111,8 @@ install:
 **Name:** CanYouGrab.it
 **Description:** Confidence-scored domain availability checking for AI agents via live DNS + WHOIS. Bulk domain checks, WHOIS lookups, and usage monitoring.
 **Image:** N/A (PyPI package: mcp-server-canyougrab, or remote endpoint)
-**Repository:** https://github.com/ericismaking/canyougrab-api
-**Documentation:** https://github.com/ericismaking/canyougrab-api/blob/main/mcp-server/README.md
+**Repository:** https://github.com/einiba/canyougrab-api
+**Documentation:** https://github.com/einiba/canyougrab-api/blob/main/mcp-server/README.md
 
 ---
 
@@ -126,7 +126,7 @@ install:
 **Auth:** OAuth 2.0 via Auth0 (authorization code flow)
 **Tools:** check_domains, get_domain_info, check_usage
 **Privacy Policy:** https://canyougrab.it/privacy
-**Support:** support@canyougrab.it + https://github.com/ericismaking/canyougrab-api/issues
+**Support:** support@canyougrab.it + https://github.com/einiba/canyougrab-api/issues
 **Test Account:** (provision before submitting — see test account script)
 
 **Example Prompts:**

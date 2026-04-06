@@ -259,11 +259,11 @@ See our privacy policy: [https://canyougrab.it/privacy](https://canyougrab.it/pr
 ## Support
 
 - Email: [support@canyougrab.it](mailto:support@canyougrab.it)
-- GitHub Issues: [github.com/ericismaking/canyougrab-api/issues](https://github.com/ericismaking/canyougrab-api/issues)
+- GitHub Issues: [github.com/einiba/canyougrab-api/issues](https://github.com/einiba/canyougrab-api/issues)
 
 ## MCP Registry
 
-mcp-name: io.github.ericismaking/canyougrab
+mcp-name: io.github.einiba/canyougrab
 
 ## License
 

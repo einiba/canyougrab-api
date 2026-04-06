@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.ericismaking/canyougrab",
+  "name": "io.github.einiba/canyougrab",
   "title": "CanYouGrab.it",
   "description": "Confidence-scored domain availability checking for AI agents via CanYouGrab.it",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "repository": {
-    "url": "https://github.com/ericismaking/canyougrab-api",
+    "url": "https://github.com/einiba/canyougrab-api",
     "source": "github"
   },
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-server-canyougrab",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "transport": {
         "type": "stdio"
       }
