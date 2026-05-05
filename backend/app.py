@@ -319,6 +319,7 @@ def api_plans():
             'domain_cap': p['domain_cap'],
             'requires_card': p['requires_card'],
             'sort_order': p['sort_order'],
+            'hosted_llm_monthly': p.get('hosted_llm_monthly', 0),
         }
         for p in plans
     ]

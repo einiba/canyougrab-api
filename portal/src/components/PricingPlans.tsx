@@ -10,6 +10,8 @@ export interface ApiPlan {
   domain_cap: number;
   requires_card: boolean;
   sort_order: number;
+  /** Added by migration 015. Optional for old API responses. */
+  hosted_llm_monthly?: number;
 }
 
 function apiPlanToDefinition(p: ApiPlan): PlanDefinition {
@@ -21,6 +23,7 @@ function apiPlanToDefinition(p: ApiPlan): PlanDefinition {
     monthlyLimit: p.monthly_limit,
     minuteLimit: p.minute_limit,
     domainCap: p.domain_cap,
+    hostedLlmMonthly: p.hosted_llm_monthly ?? 0,
     features: [],
     isActive: true,
     isFree: monthlyPrice === 0,
@@ -95,6 +98,11 @@ export function PricingPlans({
             <p className="text-sm mt-2">
               {plan.monthlyLimit.toLocaleString()} lookups / month
             </p>
+            {plan.hostedLlmMonthly > 0 && (
+              <p className="text-sm mt-2">
+                {plan.hostedLlmMonthly.toLocaleString()} AI name generations / month
+              </p>
+            )}
             {per100 !== "\u2014" && (
               <p className="text-sm mt-2 text-muted-foreground">
                 ${per100} per 100 lookups

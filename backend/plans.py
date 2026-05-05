@@ -24,10 +24,13 @@ def _load_plans() -> dict:
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
+            # hosted_llm_monthly was added in migration 015. COALESCE keeps this
+            # query backward-compatible if the column hasn't been applied yet.
             cur.execute(f"""
                 SELECT name, display_name, price_cents, monthly_limit,
                        minute_limit, domain_cap, requires_card, {price_col}, sort_order,
-                       published_at, retired_at
+                       published_at, retired_at,
+                       COALESCE(hosted_llm_monthly, 0) AS hosted_llm_monthly
                 FROM plans ORDER BY sort_order
             """)
             rows = cur.fetchall()
@@ -48,6 +51,7 @@ def _load_plans() -> dict:
             'sort_order': r[8],
             'published_at': r[9].isoformat() if r[9] else None,
             'retired_at': r[10].isoformat() if r[10] else None,
+            'hosted_llm_monthly': r[11],
         }
     logger.info('Loaded %d plans using %s column', len(plans), price_col)
     return plans

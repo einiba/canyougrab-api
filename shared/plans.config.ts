@@ -10,11 +10,22 @@ export interface PlanDefinition {
   monthlyLimit: number;
   minuteLimit: number;
   domainCap: number;
+  /**
+   * Hosted AI name-generation requests included per month.
+   * 0 means BYOK-only — the plan does not include any hosted LLM credit.
+   * Enforcement endpoint POST /api/portal/names/generate is not implemented yet,
+   * so today this field is consumed only by the marketing/portal pricing UIs.
+   */
+  hostedLlmMonthly: number;
   features: string[];
   isActive: boolean;
   isFree: boolean;
   requiresCard: boolean;
   displayOrder: number;
+  /** When true, omit from the public marketing pricing grid. The plan still
+   *  exists and is rendered to logged-in users on it (e.g. the portal pricing
+   *  page) so they can see what they're on. */
+  hideFromMarketing?: boolean;
   badge?: string;
   note?: string;
   cta?: string;
@@ -32,31 +43,35 @@ export const PLANS: Record<string, PlanDefinition> = {
     monthlyLimit: 500,
     minuteLimit: 30,
     domainCap: 30,
+    hostedLlmMonthly: 0,
     features: [
       "500 lookups/month",
       "30 requests/min",
       "30 domains/request",
-      "Add a card to unlock 10,000 lookups/mo",
+      "BYOK only — bring your own AI key",
     ],
     isActive: true,
     isFree: true,
     requiresCard: false,
     displayOrder: 0,
+    hideFromMarketing: true,
     cta: "Start Free",
-    note: "Add a card to unlock 10,000 lookups/mo",
+    note: "API tier — get a developer API key for evaluation. Use Verified for the Web UI.",
     stripe: { test: null, live: null },
   },
   free_plus: {
     id: "free_plus",
-    name: "Free+",
+    name: "Verified",
     monthlyPrice: 0,
     monthlyLimit: 10_000,
     minuteLimit: 100,
     domainCap: 100,
+    hostedLlmMonthly: 50,
     features: [
       "10,000 lookups/month",
       "100 requests/min",
       "100 domains/request",
+      "50 AI name generations / month",
       "Card on file required",
     ],
     isActive: true,
@@ -68,21 +83,22 @@ export const PLANS: Record<string, PlanDefinition> = {
   basic: {
     id: "basic",
     name: "Basic",
-    monthlyPrice: 10,
+    monthlyPrice: 5,
     monthlyLimit: 20_000,
     minuteLimit: 300,
     domainCap: 100,
+    hostedLlmMonthly: 200,
     features: [
       "20,000 lookups/month",
       "300 requests/min",
       "100 domains/request",
+      "200 AI name generations / month",
       "Email support",
     ],
     isActive: true,
     isFree: false,
     requiresCard: false,
     displayOrder: 2,
-    badge: "Most Popular",
     stripe: {
       test: { priceId: "price_1TAggjH8ksFkvmqRNEE6UHx3", productId: "prod_U8yekyOyudvstr" },
       live: { priceId: "price_1TC2DvHWwGSUcGDUDgNMlRgD", productId: "prod_UAMxgjrBkyZXDR" },
@@ -91,20 +107,23 @@ export const PLANS: Record<string, PlanDefinition> = {
   pro: {
     id: "pro",
     name: "Pro",
-    monthlyPrice: 20,
+    monthlyPrice: 7,
     monthlyLimit: 50_000,
     minuteLimit: 1_000,
     domainCap: 100,
+    hostedLlmMonthly: 500,
     features: [
       "50,000 lookups/month",
       "1,000 requests/min",
       "100 domains/request",
+      "500 AI name generations / month",
       "Priority support",
     ],
     isActive: true,
     isFree: false,
     requiresCard: false,
     displayOrder: 3,
+    badge: "Most Popular",
     stripe: {
       test: { priceId: "price_1TAggkH8ksFkvmqRUx9kVWf9", productId: "prod_U8ye2SLgAQVpiA" },
       live: { priceId: "price_1TC2DvHWwGSUcGDUqBQf1jZm", productId: "prod_UAMxnd9uzO3BYf" },
@@ -113,14 +132,16 @@ export const PLANS: Record<string, PlanDefinition> = {
   business: {
     id: "business",
     name: "Business",
-    monthlyPrice: 30,
+    monthlyPrice: 9,
     monthlyLimit: 300_000,
     minuteLimit: 3_000,
     domainCap: 100,
+    hostedLlmMonthly: 2_000,
     features: [
       "300,000 lookups/month",
       "3,000 requests/min",
       "100 domains/request",
+      "2,000 AI name generations / month",
       "Priority support",
     ],
     isActive: true,
@@ -140,6 +161,7 @@ export const PLANS: Record<string, PlanDefinition> = {
     monthlyLimit: 100,
     minuteLimit: 10,
     domainCap: 100,
+    hostedLlmMonthly: 0,
     features: [],
     isActive: false,
     isFree: false,
@@ -167,6 +189,12 @@ export function getPaidPlans(): PlanDefinition[] {
 /** Get active plans suitable for the public pricing grid (excludes Free+ since it's an upgrade, not a standalone choice) */
 export function getDisplayPlans(): PlanDefinition[] {
   return getActivePlans().filter((p) => p.id !== "free_plus");
+}
+
+/** Get plans for the marketing pricing grid — excludes plans flagged hideFromMarketing.
+ *  Today this drops the bare Free plan (API-only tier) and surfaces Verified instead. */
+export function getMarketingPlans(): PlanDefinition[] {
+  return getActivePlans().filter((p) => !p.hideFromMarketing);
 }
 
 /** Get per-100-lookups cost string */
