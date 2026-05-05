@@ -9,6 +9,7 @@ import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { DocsPage } from "@/pages/DocsPage";
 import { InteractivePage } from "@/pages/InteractivePage";
 import { SavedNamesPage } from "@/pages/SavedNamesPage";
+import { SignupPage } from "@/pages/SignupPage";
 import { TermsPage } from "@/pages/TermsPage";
 
 export default function App() {
@@ -92,6 +93,7 @@ export default function App() {
         />
         <Route path="docs" element={<DocsPage />} />
         <Route path="terms" element={<TermsPage />} />
+        <Route path="signup" element={<SignupPage />} />
       </Route>
     </Routes>
   );
