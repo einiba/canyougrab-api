@@ -18,3 +18,27 @@ export const STRIPE_PUBLISHABLE_KEY = isDev
 export const AUTH0_DOMAIN = "login.canyougrab.it";
 export const AUTH0_CLIENT_ID = "Xz0TZK9Z2E9wN55FJVQYsMHsLougZzRm";
 export const AUTH0_AUDIENCE = "https://api.canyougrab.it";
+
+// ─── Contract for shared/name-generator (synced from canyougrab-site) ─────
+// The shared code imports these symbols from `@/config`. Re-export portal's
+// values under the names the shared code expects.
+
+export const API_BASE_URL = API_BASE;
+export const PORTAL_URL = isDev ? "https://dev-portal.canyougrab.it" : "https://portal.canyougrab.it";
+
+const NAMECHEAP_AFFILIATE_ID = (import.meta.env.VITE_NAMECHEAP_AFFILIATE_ID as string | undefined) ?? "";
+const PORKBUN_AFFILIATE_ID = (import.meta.env.VITE_PORKBUN_AFFILIATE_ID as string | undefined) ?? "";
+
+export function namecheapRegisterUrl(domain: string): string {
+  const base = `https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(domain)}`;
+  return NAMECHEAP_AFFILIATE_ID
+    ? `${base}&aff=${encodeURIComponent(NAMECHEAP_AFFILIATE_ID)}`
+    : base;
+}
+
+export function porkbunRegisterUrl(domain: string): string {
+  const base = `https://porkbun.com/checkout/search?q=${encodeURIComponent(domain)}`;
+  return PORKBUN_AFFILIATE_ID
+    ? `${base}&ref=${encodeURIComponent(PORKBUN_AFFILIATE_ID)}`
+    : base;
+}

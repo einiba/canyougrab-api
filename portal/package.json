@@ -5,11 +5,13 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "sync-shared": "node scripts/sync-shared.mjs",
     "build": "cp config/routes.oas.json public/openapi.json && tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2",
+    "@fingerprintjs/fingerprintjs": "^5.2.0",
     "react": "^19",
     "react-dom": "^19",
     "react-router": "^7",
