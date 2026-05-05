@@ -8,6 +8,7 @@ import { CardSetupPage } from "@/pages/CardSetupPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { DocsPage } from "@/pages/DocsPage";
 import { InteractivePage } from "@/pages/InteractivePage";
+import { SavedNamesPage } from "@/pages/SavedNamesPage";
 import { TermsPage } from "@/pages/TermsPage";
 
 export default function App() {
@@ -78,6 +79,14 @@ export default function App() {
           element={
             <RequireAuth>
               <InteractivePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="saved-names"
+          element={
+            <RequireAuth>
+              <SavedNamesPage />
             </RequireAuth>
           }
         />

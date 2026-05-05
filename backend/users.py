@@ -19,6 +19,7 @@ def upsert_user(
     picture_url: str = '',
     email_verified: bool = False,
     auth_provider: str = '',
+    visitor_id: str = '',
 ) -> Optional[dict]:
     """Insert or update a user record.  Returns the user row as a dict.
 
@@ -60,6 +61,12 @@ def upsert_user(
         is_new = row[8] is not None and row[9] is not None and row[8] == row[9]
         if is_new:
             notify_new_user(email=row[2], name=row[5], auth_provider=row[7])
+            if visitor_id:
+                try:
+                    from name_gen import claim_anon_lists
+                    claim_anon_lists(visitor_id, auth0_sub)
+                except Exception as e:
+                    logger.warning('Failed to claim anon name lists for new user %s: %s', auth0_sub, e)
 
         return {
             'id': str(row[0]),

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
 import { API_BASE } from "@/config";
+import { claimPending } from "@/lib/anonClaim";
 
 export interface SessionData {
   tos_accepted_at: string | null;
@@ -34,6 +35,10 @@ export function useSession() {
           tos_version: data.tos_version ?? null,
           current_tos_version: data.current_tos_version ?? "1.0",
         });
+        // After session lands, claim any anonymous name-generation lists the
+        // user created on the marketing site before signing up. Idempotent;
+        // safe to run on every login.
+        claimPending(signRequest).catch(() => { /* non-critical */ });
       }
     } catch {
       // Non-critical — user record will be created on next request

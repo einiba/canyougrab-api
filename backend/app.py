@@ -31,6 +31,8 @@ from session import router as session_router
 from portal import router as portal_router
 from link_accounts import router as link_accounts_router
 from health import router as health_router
+from name_gen_routes import router as name_gen_router
+from share_routes import router as share_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -79,6 +81,8 @@ app.include_router(session_router)
 app.include_router(portal_router)
 app.include_router(link_accounts_router)
 app.include_router(health_router)
+app.include_router(name_gen_router)
+app.include_router(share_router)
 
 
 def _request_origin(request: Request) -> str:
