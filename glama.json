@@ -1,0 +1,23 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "name": "mcp-server-canyougrab",
+  "description": "Confidence-scored domain availability checking for AI agents via real-time DNS and WHOIS lookups. Bulk-check up to 100 domains per request, RDAP/WHOIS enrichment for registered domains, and quota monitoring. All tools are read-only with correct MCP safety annotations.",
+  "author": "Eric Cocozza",
+  "maintainers": ["einiba"],
+  "homepage": "https://canyougrab.it",
+  "repository": "https://github.com/einiba/canyougrab-api",
+  "license": "MIT",
+  "categories": ["Developer Tools"],
+  "keywords": [
+    "domain",
+    "dns",
+    "whois",
+    "rdap",
+    "domain-availability",
+    "domain-name",
+    "registrar",
+    "bulk",
+    "remote",
+    "oauth"
+  ]
+}
