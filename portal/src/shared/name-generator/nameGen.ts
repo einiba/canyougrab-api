@@ -232,6 +232,105 @@ interface CheckResultRow {
   available: boolean | null;
 }
 
+export interface CheckDomainsContext {
+  /**
+   * When provided, the portal-authenticated bulk-check endpoint is used and
+   * the returned token is sent as a bearer header. When omitted, the anonymous
+   * /api/names/check endpoint is used (50/day soft cap, surfaces ByokLimitError).
+   */
+  getAccessToken?: () => Promise<string>;
+}
+
+const PORTAL_BULK_CHECK_PATH = "/api/portal/check/bulk";
+const CHECK_MODE_MAX_INPUT = 100;
+
+/**
+ * Check-mode entry point: takes a paste/list of candidate domains, runs them
+ * through the live availability pipeline, and returns the same `GeneratedName`
+ * shape the AI flow uses so the existing card grid renders without changes.
+ *
+ * Sanitizes input (lowercases, strips protocol, dedupes, validates basic shape)
+ * and caps at 100 entries. Anonymous callers reuse `fetchAvailability` (50/day
+ * server cap, ByokLimitError on 429). Portal callers hit `/api/portal/check/bulk`
+ * with their bearer token; plan limits are enforced server-side.
+ */
+export async function checkDomainsOnly(
+  rawDomains: string[],
+  ctx?: CheckDomainsContext,
+): Promise<GeneratedName[]> {
+  const cleaned = sanitizeDomainList(rawDomains);
+  if (cleaned.length === 0) return [];
+
+  const rows = ctx?.getAccessToken
+    ? await fetchAvailabilityPortal(cleaned, ctx.getAccessToken)
+    : await fetchAvailability(cleaned);
+  const byDomain = new Map(rows.map((r) => [r.domain, r] as const));
+
+  const results: GeneratedName[] = cleaned.map((d) => {
+    const row = byDomain.get(d);
+    const dot = d.lastIndexOf(".");
+    return {
+      domain: d,
+      available: row?.available ?? null,
+      tld: dot >= 0 ? d.slice(dot + 1) : "",
+      base: dot >= 0 ? d.slice(0, dot) : d,
+    };
+  });
+
+  results.sort((a, b) => {
+    const score = (r: GeneratedName) =>
+      r.available === true ? 0 : r.available === null ? 1 : 2;
+    const s = score(a) - score(b);
+    return s !== 0 ? s : a.domain.length - b.domain.length;
+  });
+
+  return results;
+}
+
+function sanitizeDomainList(input: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/.*$/, "");
+    if (trimmed.length < 4 || trimmed.length > 255) continue;
+    if (!/^[a-z0-9.-]+$/.test(trimmed)) continue;
+    if (!trimmed.includes(".")) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (out.length >= CHECK_MODE_MAX_INPUT) break;
+  }
+  return out;
+}
+
+async function fetchAvailabilityPortal(
+  domains: string[],
+  getAccessToken: () => Promise<string>,
+): Promise<CheckResultRow[]> {
+  const token = await getAccessToken();
+  const res = await fetch(`${API_BASE_URL}${PORTAL_BULK_CHECK_PATH}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ domains }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const detail = data?.error ?? data?.message ?? data?.detail ?? `HTTP ${res.status}`;
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const data = await res.json();
+  return (data.results as CheckResultRow[]) ?? [];
+}
+
 async function fetchAvailability(domains: string[]): Promise<CheckResultRow[]> {
   if (domains.length === 0) return [];
   const visitorHeaders = await getVisitorHeaders();

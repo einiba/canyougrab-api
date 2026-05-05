@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import "./styles.css";
 import {
   ByokLimitError,
+  checkDomainsOnly,
   generateNames,
   type GenerateNamesResponse,
   type NameStyle,
@@ -17,6 +18,25 @@ import FavoritesTray from "./FavoritesTray";
 import { readByokKey, subscribe as subscribeByok } from "./byok/storage";
 import { PROVIDERS } from "./byok/types";
 import type { GeneratedName } from "./nameGen";
+
+type Mode = "generate" | "check";
+
+interface NameGeneratorProps {
+  /**
+   * When provided, Check mode uses the portal-authenticated bulk-check
+   * endpoint and sends this token as a bearer header. Marketing site (anon)
+   * leaves this undefined and Check mode falls back to /api/names/check.
+   */
+  getAccessToken?: () => Promise<string>;
+  /**
+   * Hide the BYOK gate even when no key is set. Reserved for future paid
+   * hosted-LLM tiers — currently unused; both apps still require BYOK to
+   * generate.
+   */
+  hideByokGate?: boolean;
+  /** Initial tab. Defaults to "generate". */
+  defaultMode?: Mode;
+}
 
 const STYLE_OPTIONS: { value: NameStyle; label: string }[] = [
   { value: "modern", label: "Modern" },
@@ -45,12 +65,19 @@ function useByokKey() {
   return key;
 }
 
-export default function NameGenerator() {
+export default function NameGenerator({
+  getAccessToken,
+  hideByokGate = false,
+  defaultMode = "generate",
+}: NameGeneratorProps = {}) {
   const byok = useByokKey();
+  const [mode, setMode] = useState<Mode>(defaultMode);
   const [description, setDescription] = useState("");
   const [styles, setStyles] = useState<Set<NameStyle>>(new Set(["modern"]));
   const [tldPref, setTldPref] = useState<TldPreference>("any");
   const [response, setResponse] = useState<GenerateNamesResponse | null>(null);
+  const [checkResults, setCheckResults] = useState<GeneratedName[] | null>(null);
+  const [pasteInput, setPasteInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasGenerated, setHasGenerated] = useState(false);
@@ -65,13 +92,26 @@ export default function NameGenerator() {
   // Anchors: bases the user wants more like — biases the next generation.
   const [anchors, setAnchors] = useState<Set<string>>(() => new Set());
 
+  function switchMode(next: Mode) {
+    if (next === mode) return;
+    setMode(next);
+    setError(null);
+    setByokLimit(null);
+    setHasGenerated(false);
+    setResponse(null);
+    setCheckResults(null);
+    setFilter("available");
+    setTldFilter("all");
+  }
+
   function togglePin(domain: string) {
     setFavorites((prev) => {
       const next = new Map(prev);
       if (next.has(domain)) {
         next.delete(domain);
       } else {
-        const r = (response?.results ?? []).find((x) => x.domain === domain);
+        const pool = mode === "check" ? checkResults ?? [] : response?.results ?? [];
+        const r = pool.find((x) => x.domain === domain);
         if (r) next.set(domain, r);
       }
       return next;
@@ -157,7 +197,52 @@ export default function NameGenerator() {
     }
   }
 
-  const results = response?.results ?? [];
+  async function handleCheckSubmit(e: FormEvent) {
+    e.preventDefault();
+    const lines = pasteInput
+      .split(/[\s,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      setError("Paste at least one domain — one per line is fine.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setByokLimit(null);
+    setCheckResults(null);
+    setHasGenerated(true);
+    try {
+      const out = await checkDomainsOnly(
+        lines,
+        getAccessToken ? { getAccessToken } : undefined,
+      );
+      if (out.length === 0) {
+        setError(
+          "No valid domains found. Try pasting full hostnames like `myidea.com` (one per line).",
+        );
+      }
+      setCheckResults(out);
+      logger.info("Domains checked", {
+        input: lines.length,
+        valid: out.length,
+        portal: Boolean(getAccessToken),
+      });
+    } catch (err) {
+      if (err instanceof ByokLimitError) {
+        logger.info("BYOK daily limit reached on check", { dailyLimit: err.dailyLimit });
+        setByokLimit(err);
+      } else {
+        const msg = err instanceof Error ? err.message : "Something went wrong.";
+        logger.error("Domain check failed", { error: msg });
+        setError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const results = mode === "check" ? checkResults ?? [] : response?.results ?? [];
 
   const availableTlds = useMemo(() => {
     const set = new Set<string>();
@@ -177,15 +262,71 @@ export default function NameGenerator() {
   const availableCount = results.filter((r) => r.available === true).length;
   const submitDisabled = loading || description.trim().length === 0 || !byok;
 
+  const showGenerateForm = mode === "generate" && (byok || hideByokGate);
+  const showByokGate = mode === "generate" && !byok && !hideByokGate;
+
   return (
     <div className="namegen">
+      <div className="namegen-mode-tabs" role="tablist" aria-label="Name generation mode">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "generate"}
+          className={`namegen-mode-tab ${mode === "generate" ? "active" : ""}`}
+          onClick={() => switchMode("generate")}
+          disabled={loading}
+        >
+          ✨ Generate names
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "check"}
+          className={`namegen-mode-tab ${mode === "check" ? "active" : ""}`}
+          onClick={() => switchMode("check")}
+          disabled={loading}
+        >
+          🔍 Check my list
+        </button>
+      </div>
+
       <div className="namegen-byok-row">
         <ByokIndicator onOpen={() => setShowByok(true)} />
       </div>
 
-      {!byok && <ByokRequiredPanel onAdd={() => setShowByok(true)} />}
+      {showByokGate && <ByokRequiredPanel onAdd={() => setShowByok(true)} />}
 
-      {byok && (
+      {mode === "check" && (
+        <form onSubmit={handleCheckSubmit} className="namegen-form">
+          <label className="namegen-label" htmlFor="namegen-paste">
+            Paste domains to check — one per line
+          </label>
+          <textarea
+            id="namegen-paste"
+            className="namegen-textarea"
+            value={pasteInput}
+            onChange={(e) => setPasteInput(e.target.value)}
+            placeholder={"myidea.com\nmyidea.io\nmyidea.app\n…"}
+            rows={6}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            disabled={loading}
+          />
+          <p className="namegen-hint text-muted">
+            Up to 100 domains. We'll skip duplicates and run live DNS + WHOIS on each one.
+          </p>
+          <button
+            type="submit"
+            className="btn btn-primary btn-large namegen-submit"
+            disabled={loading || pasteInput.trim().length === 0}
+          >
+            {loading ? "Checking…" : "Check availability"}
+          </button>
+        </form>
+      )}
+
+      {showGenerateForm && (
         <>
           <form onSubmit={handleSubmit} className="namegen-form">
             <label className="namegen-label" htmlFor="namegen-desc">
@@ -277,94 +418,101 @@ export default function NameGenerator() {
                 : "Find me a name"}
             </button>
           </form>
-
-          {error && <p className="demo-error namegen-error">{error}</p>}
-
-          {byokLimit && <SoftPaywall limit={byokLimit} />}
-
-          {hasGenerated && !loading && response && results.length > 0 && (
-            <div className="namegen-results-area">
-              <div className="namegen-summary">
-                <strong>{availableCount}</strong> of {results.length} suggestions look available.{" "}
-                <span className="text-muted">Live DNS + WHOIS lookup.</span>
-                {response.listId && (
-                  <span className="namegen-summary-actions">
-                    <button
-                      type="button"
-                      className="namegen-share-btn"
-                      onClick={handleCopyShareLink}
-                    >
-                      {copiedShare ? "✓ Link copied" : "Copy share link"}
-                    </button>
-                    <a
-                      href={response.signupUrl}
-                      className="namegen-share-btn namegen-save-btn"
-                    >
-                      Save to account
-                    </a>
-                  </span>
-                )}
-              </div>
-
-              <div className="namegen-filters">
-                <div className="namegen-filter-group" role="tablist" aria-label="Filter by availability">
-                  {(["available", "all", "taken"] as AvailabilityFilter[]).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      role="tab"
-                      aria-selected={filter === f}
-                      className={`namegen-filter ${filter === f ? "active" : ""}`}
-                      onClick={() => setFilter(f)}
-                    >
-                      {f === "available" ? "Available" : f === "taken" ? "Taken" : "All"}
-                    </button>
-                  ))}
-                </div>
-
-                {availableTlds.length > 1 && (
-                  <select
-                    className="namegen-tld-select"
-                    value={tldFilter}
-                    onChange={(e) => setTldFilter(e.target.value)}
-                    aria-label="Filter by TLD"
-                  >
-                    <option value="all">All extensions</option>
-                    {availableTlds.map((t) => (
-                      <option key={t} value={t}>
-                        .{t}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              {filtered.length === 0 ? (
-                <p className="namegen-empty">
-                  No matches with these filters. Try widening the filter or generating again with a different style.
-                </p>
-              ) : (
-                <ul className="namegen-grid">
-                  {filtered.map((r) => (
-                    <NameCard
-                      key={r.domain}
-                      result={r}
-                      signupUrl={response.signupUrl}
-                      pinned={favorites.has(r.domain)}
-                      anchored={anchors.has(r.base)}
-                      onTogglePin={togglePin}
-                      onToggleAnchor={toggleAnchor}
-                    />
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {hasGenerated && !loading && response && results.length === 0 && !error && (
-            <p className="namegen-empty">No suggestions yet — try rephrasing your description.</p>
-          )}
         </>
+      )}
+
+      {error && <p className="demo-error namegen-error">{error}</p>}
+
+      {byokLimit && <SoftPaywall limit={byokLimit} />}
+
+      {hasGenerated && !loading && results.length > 0 && (
+        <div className="namegen-results-area">
+          <div className="namegen-summary">
+            <strong>{availableCount}</strong> of {results.length}{" "}
+            {mode === "check" ? "look available." : "suggestions look available."}{" "}
+            <span className="text-muted">Live DNS + WHOIS lookup.</span>
+            {mode === "generate" && response?.listId && (
+              <span className="namegen-summary-actions">
+                <button
+                  type="button"
+                  className="namegen-share-btn"
+                  onClick={handleCopyShareLink}
+                >
+                  {copiedShare ? "✓ Link copied" : "Copy share link"}
+                </button>
+                <a
+                  href={response.signupUrl}
+                  className="namegen-share-btn namegen-save-btn"
+                >
+                  Save to account
+                </a>
+              </span>
+            )}
+          </div>
+
+          <div className="namegen-filters">
+            <div className="namegen-filter-group" role="tablist" aria-label="Filter by availability">
+              {(["available", "all", "taken"] as AvailabilityFilter[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === f}
+                  className={`namegen-filter ${filter === f ? "active" : ""}`}
+                  onClick={() => setFilter(f)}
+                >
+                  {f === "available" ? "Available" : f === "taken" ? "Taken" : "All"}
+                </button>
+              ))}
+            </div>
+
+            {availableTlds.length > 1 && (
+              <select
+                className="namegen-tld-select"
+                value={tldFilter}
+                onChange={(e) => setTldFilter(e.target.value)}
+                aria-label="Filter by TLD"
+              >
+                <option value="all">All extensions</option>
+                {availableTlds.map((t) => (
+                  <option key={t} value={t}>
+                    .{t}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {filtered.length === 0 ? (
+            <p className="namegen-empty">
+              {mode === "check"
+                ? "No matches with these filters."
+                : "No matches with these filters. Try widening the filter or generating again with a different style."}
+            </p>
+          ) : (
+            <ul className="namegen-grid">
+              {filtered.map((r) => (
+                <NameCard
+                  key={r.domain}
+                  result={r}
+                  signupUrl={response?.signupUrl}
+                  pinned={favorites.has(r.domain)}
+                  anchored={mode === "generate" && anchors.has(r.base)}
+                  onTogglePin={togglePin}
+                  onToggleAnchor={mode === "generate" ? toggleAnchor : undefined}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {hasGenerated && !loading && results.length === 0 && !error && !byokLimit && (
+        <p className="namegen-empty">
+          {mode === "check"
+            ? "No valid domains found in your input. Paste full hostnames like `myidea.com` (one per line)."
+            : "No suggestions yet — try rephrasing your description."}
+        </p>
       )}
 
       {showByok && <ByokSettings onClose={() => setShowByok(false)} />}

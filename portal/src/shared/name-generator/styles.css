@@ -699,6 +699,36 @@
 }
 
 
+/* ─── Mode tabs (Generate vs Check) ─────────────────────────────────────── */
+.namegen-mode-tabs {
+  display: inline-flex;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 4px;
+  margin-bottom: 1.25rem;
+}
+.namegen-mode-tab {
+  padding: 0.5rem 1.1rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 100px;
+  transition: all 0.15s ease;
+}
+.namegen-mode-tab:hover:not(:disabled) { color: var(--text); }
+.namegen-mode-tab.active { background: var(--accent); color: var(--bg); }
+.namegen-mode-tab:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.namegen-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
 /* ─── BYOK: indicator pill, settings modal ──────────────────────────────── */
 .namegen-byok-row {
   display: flex;

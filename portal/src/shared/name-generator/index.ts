@@ -20,6 +20,7 @@ export { default as ByokSettings } from "./ByokSettings";
 
 export {
   generateNames,
+  checkDomainsOnly,
   ByokLimitError,
   TrialExhaustedError,
   type GenerateNamesRequest,
@@ -28,6 +29,7 @@ export {
   type NameStyle,
   type TldPreference,
   type GenerationMode,
+  type CheckDomainsContext,
 } from "./nameGen";
 
 export {
