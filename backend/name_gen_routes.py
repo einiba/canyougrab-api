@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, Header, Request
 from fastapi.responses import JSONResponse
 
-from auth import JWTUser, jwt_auth
+from auth import JWTUser, jwt_auth, jwt_auth_optional
 from name_gen import (
     BYOK_DAILY_LIMIT,
     CooldownError,
@@ -48,7 +48,12 @@ async def generate_names(
     x_visitor_fingerprint: Optional[str] = Header(default=None, alias='X-Visitor-Fingerprint'),
 ):
     """Generate brandable name candidates for a business description and check
-    live availability. Trial-gated for anonymous callers.
+    live availability.
+
+    Anonymous: trial-gated by per-visitor + per-IP daily caps.
+    Authenticated: bypasses anon trial gate (already on a plan). Plan-tier
+    monthly hosted-LLM cap enforcement is parked — until that lands, logged-in
+    callers get effectively unlimited hosted gen.
 
     Body: {description: str, styles: [str], tld_preference: str, count: int}
     """
@@ -66,7 +71,10 @@ async def generate_names(
     if tld_pref not in ('com_only', 'tech', 'global', 'any'):
         tld_pref = 'any'
 
-    if not x_visitor_id:
+    user = jwt_auth_optional(request)
+    is_authenticated = user is not None
+
+    if not is_authenticated and not x_visitor_id:
         return JSONResponse(
             {'detail': 'Missing X-Visitor-Id header.'},
             status_code=400,
@@ -80,9 +88,11 @@ async def generate_names(
             description=description,
             styles=[s for s in styles if isinstance(s, str)],
             tld_pref=tld_pref,
-            visitor_id=x_visitor_id,
+            visitor_id=x_visitor_id or (user.sub if user else ''),
             fingerprint=x_visitor_fingerprint,
             ip_hash=ip_hash,
+            is_authenticated=is_authenticated,
+            user_sub=user.sub if user else None,
         )
     except HostedDailyCapError as e:
         # FE renders soft paywall: signup OR BYOK. The two scopes share a

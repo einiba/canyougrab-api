@@ -190,18 +190,32 @@ def daily_count_ip(ip_hash: Optional[str]) -> int:
 
 # ── Saved generation lists (claim-on-signup) ───────────────────────────────
 
-def save_generation_list(visitor_id: str, description: str, payload: dict) -> Optional[str]:
+def save_generation_list(
+    visitor_id: str,
+    description: str,
+    payload: dict,
+    user_sub: Optional[str] = None,
+) -> Optional[str]:
     """Persist a generation result so it can be attached to an account when
-    the visitor signs up. Returns the new list id, or None on failure."""
+    the visitor signs up. When `user_sub` is provided (already-authenticated
+    caller), the list is attached directly so it shows up in /api/names/mine
+    immediately — no claim step needed."""
     if not visitor_id or not description:
         return None
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                'INSERT INTO name_generation_lists (visitor_id, description, payload) '
-                'VALUES (%s, %s, %s) RETURNING id',
-                (visitor_id, description, json.dumps(payload)),
+                'INSERT INTO name_generation_lists '
+                '(visitor_id, user_sub, claimed_at, description, payload) '
+                'VALUES (%s, %s, %s, %s, %s) RETURNING id',
+                (
+                    visitor_id,
+                    user_sub,
+                    datetime.now(timezone.utc) if user_sub else None,
+                    description,
+                    json.dumps(payload),
+                ),
             )
             row = cur.fetchone()
             conn.commit()
@@ -501,27 +515,41 @@ async def generate_for_visitor(
     visitor_id: str,
     fingerprint: Optional[str],
     ip_hash: Optional[str],
+    is_authenticated: bool = False,
+    user_sub: Optional[str] = None,
 ) -> dict:
     """Full pipeline. Returns the response dict, or raises a structured error
     on hard limits / cooldowns / hosted-LLM unavailability.
+
+    Authenticated callers bypass the anon trial gate entirely (daily caps,
+    rolling-window cooldowns, tier shaping). Plan-tier monthly hosted-LLM cap
+    enforcement is the next step but not implemented yet, so logged-in users
+    are effectively unlimited today.
     """
-    # Per-IP daily cap protects the hosted LLM from scripted abuse that rotates
-    # visitor_ids — checked first, since IP is harder to spoof than a cookie.
-    if daily_count_ip(ip_hash) >= HOSTED_IP_DAILY_LIMIT:
-        raise HostedDailyCapError('ip', HOSTED_IP_DAILY_LIMIT)
-    # Per-visitor daily cap drives signup conversion.
-    if daily_count_visitor(visitor_id, fingerprint) >= HOSTED_VISITOR_DAILY_LIMIT:
-        raise HostedDailyCapError('visitor', HOSTED_VISITOR_DAILY_LIMIT)
+    if not is_authenticated:
+        # Per-IP daily cap protects the hosted LLM from scripted abuse that
+        # rotates visitor_ids — checked first, since IP is harder to spoof.
+        if daily_count_ip(ip_hash) >= HOSTED_IP_DAILY_LIMIT:
+            raise HostedDailyCapError('ip', HOSTED_IP_DAILY_LIMIT)
+        # Per-visitor daily cap drives signup conversion.
+        if daily_count_visitor(visitor_id, fingerprint) >= HOSTED_VISITOR_DAILY_LIMIT:
+            raise HostedDailyCapError('visitor', HOSTED_VISITOR_DAILY_LIMIT)
 
-    pre = aggregate_usage(visitor_id, fingerprint, ip_hash)
-    pre_tier = tier_for_count(pre['count'])
-    cooldown = cooldown_remaining_ms(pre_tier, pre['last_at'])
-    if cooldown > 0:
-        raise CooldownError(cooldown)
+        pre = aggregate_usage(visitor_id, fingerprint, ip_hash)
+        pre_tier = tier_for_count(pre['count'])
+        cooldown = cooldown_remaining_ms(pre_tier, pre['last_at'])
+        if cooldown > 0:
+            raise CooldownError(cooldown)
 
-    record_usage(visitor_id, fingerprint, ip_hash)
-    new_count = pre['count'] + 1
-    tier = tier_for_count(new_count)
+        record_usage(visitor_id, fingerprint, ip_hash)
+        new_count = pre['count'] + 1
+        tier = tier_for_count(new_count)
+    else:
+        # Authenticated: skip all anon trial accounting. Use the lowest tier
+        # so downstream shaping returns full results with no cooldown / no
+        # locked cards.
+        new_count = 0
+        tier = 'curious'
 
     bases = await llm_generate_bases_async(description, styles, tld_pref, count=18)
     domains = expand_to_domains(bases, tld_pref, cap=FULL_RESULT_COUNT)
@@ -578,6 +606,7 @@ async def generate_for_visitor(
             'results': results,
             'tier': tier,
         },
+        user_sub=user_sub,
     )
     if list_id:
         response['list_id'] = list_id

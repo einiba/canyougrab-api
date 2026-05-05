@@ -240,17 +240,31 @@ class JWTUser:
 
 def jwt_auth(request: Request) -> JWTUser:
     """FastAPI dependency — validates Auth0 JWT from Authorization header."""
+    user = jwt_auth_optional(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail='Missing or invalid Authorization header')
+    return user
+
+
+def jwt_auth_optional(request: Request) -> Optional['JWTUser']:
+    """Soft variant of jwt_auth — returns None when no token / invalid token,
+    instead of raising. Lets a route serve both anon and authenticated callers
+    from a single endpoint.
+
+    Caller decides what to do when None: typically fall through to anon-trial
+    logic; for actively-malformed tokens we still return None (treating as anon)
+    rather than 401, since this endpoint's contract is "anon works too".
+    """
     auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
-        raise HTTPException(status_code=401, detail='Missing or invalid Authorization header')
-
+        return None
     token = auth_header[7:]
     if not token:
-        raise HTTPException(status_code=401, detail='Empty token')
+        return None
 
     rsa_key = _find_rsa_key(token)
     if not rsa_key:
-        raise HTTPException(status_code=401, detail='Unable to find appropriate key')
+        return None
 
     try:
         payload = jwt.decode(
@@ -260,10 +274,8 @@ def jwt_auth(request: Request) -> JWTUser:
             audience=AUTH0_AUDIENCE,
             issuer=AUTH0_ISSUER,
         )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail='Token expired')
-    except JWTError as e:
-        raise HTTPException(status_code=401, detail=f'Token validation failed: {e}')
+    except (jwt.ExpiredSignatureError, JWTError):
+        return None
 
     return JWTUser(
         sub=payload.get('sub', ''),
