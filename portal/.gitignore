@@ -9,3 +9,8 @@ node_modules/
 
 # Allow dist/ (built static site for deploy)
 !dist/
+
+# Shared name-generator is re-vendored at build time by CI from
+# einiba/canyougrab-site at the SHA pinned in scripts/.shared-source-sha.
+# Run `npm run sync-shared` locally before `npm run dev` / `npm run build`.
+src/shared/

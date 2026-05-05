@@ -11,8 +11,10 @@ lives in canyougrab-site; the portal vendors a copy.
 
 ### When to run
 
-Run **whenever you bump `.shared-source-sha`** — after a feature has landed
-in canyougrab-site that you want to flow into the portal.
+`portal/src/shared/` is **gitignored**. The CI workflow re-vendors it at
+build time, so production deploys don't rely on a committed copy. For
+local dev (`npm run dev` / `npm run build`) you need to populate it
+once after cloning, and again whenever you bump `.shared-source-sha`:
 
 ```bash
 # 1. Update the pinned SHA
