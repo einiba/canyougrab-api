@@ -40,7 +40,13 @@ ROLLING_WINDOW_DAYS = 7
 # engine, so we cap them separately, more permissively. Tunable.
 BYOK_DAILY_LIMIT = 50
 
-# Anthropic config (optional)
+# Hosted-LLM anon caps (cost-protection layer in front of the home machine).
+# Per-visitor cap drives signup conversion; per-IP cap defends against scripted
+# abuse that rotates visitor_ids. Adjust via env without redeploying code.
+HOSTED_VISITOR_DAILY_LIMIT = int(os.environ.get('HOME_LLM_VISITOR_DAILY', '5'))
+HOSTED_IP_DAILY_LIMIT = int(os.environ.get('HOME_LLM_IP_DAILY', '20'))
+
+# Anthropic config (optional, legacy fallback before HOME_LLM)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 ANTHROPIC_MODEL = os.environ.get('NAMEGEN_MODEL', 'claude-haiku-4-5')
 
@@ -139,6 +145,45 @@ def record_usage(visitor_id: str, fingerprint: Optional[str], ip_hash: Optional[
                 (visitor_id, fingerprint, ip_hash),
             )
             conn.commit()
+    finally:
+        conn.close()
+
+
+def daily_count_visitor(visitor_id: str, fingerprint: Optional[str]) -> int:
+    """Generations from this visitor in the last 24h. Aggregates by MAX across
+    visitor_id and fingerprint so clearing cookies alone doesn't reset."""
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            counts: list[int] = []
+            for field, value in (('visitor_id', visitor_id), ('fingerprint', fingerprint)):
+                if not value:
+                    continue
+                cur.execute(
+                    f'SELECT COUNT(*) FROM anon_name_gen_usage '
+                    f"WHERE {field} = %s AND created_at > NOW() - INTERVAL '24 hours'",
+                    (value,),
+                )
+                counts.append(cur.fetchone()[0] or 0)
+            return max(counts) if counts else 0
+    finally:
+        conn.close()
+
+
+def daily_count_ip(ip_hash: Optional[str]) -> int:
+    """Generations from this IP-hash in the last 24h. Used to gate scripted
+    abuse that rotates visitor_ids."""
+    if not ip_hash:
+        return 0
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT COUNT(*) FROM anon_name_gen_usage '
+                "WHERE ip_hash = %s AND created_at > NOW() - INTERVAL '24 hours'",
+                (ip_hash,),
+            )
+            return cur.fetchone()[0] or 0
     finally:
         conn.close()
 
@@ -292,37 +337,59 @@ Rules:
 Return ONLY a JSON array of strings, no commentary. Example: ["frondly", "treekit", "leafgraph"]"""
 
 
-def llm_generate_bases(description: str, styles: list[str], tld_pref: str, count: int) -> list[str]:
-    if not ANTHROPIC_API_KEY:
-        logger.info('ANTHROPIC_API_KEY not set; using rule-based name generator')
-        return rule_based_bases(description, styles, count)
+async def llm_generate_bases_async(description: str, styles: list[str], tld_pref: str, count: int) -> list[str]:
+    """Async path: prefer the hosted home LLM, fall back to Anthropic, then rule-based.
 
+    The hosted LLM is the primary anon-mode generator. Anthropic stays wired as a
+    legacy fallback for environments that have ANTHROPIC_API_KEY set but not
+    HOME_LLM_API_KEY. Both fall back to rule-based on any failure so the
+    endpoint never hard-fails for the visitor.
+    """
+    # Hosted home-LLM path
     try:
-        import anthropic  # type: ignore
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1024,
-            messages=[{
-                'role': 'user',
-                'content': LLM_PROMPT.format(
-                    count=count,
-                    description=description.strip()[:1000],
-                    styles=', '.join(styles) if styles else 'modern',
-                    tld_pref=tld_pref,
-                ),
-            }],
-        )
-        text = msg.content[0].text.strip()
-        # Strip ```json fences if present
-        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.MULTILINE).strip()
-        bases = json.loads(text)
-        if not isinstance(bases, list):
-            raise ValueError('LLM did not return a list')
-        return [_clean(b) for b in bases if isinstance(b, str)][:count]
+        from hosted_llm import generate_bases as hosted_generate, is_configured
+        if is_configured():
+            bases = await hosted_generate(description, styles, tld_pref, count)
+            if bases:
+                return bases
+            logger.info('Hosted LLM returned no bases; falling back')
     except Exception as e:
-        logger.warning('LLM name generation failed (%s); falling back to rules', e)
-        return rule_based_bases(description, styles, count)
+        # HostedQueueFullError, HostedUnavailableError, network, etc.
+        logger.warning('Hosted LLM unavailable (%s); falling back', type(e).__name__)
+
+    # Anthropic legacy fallback
+    if ANTHROPIC_API_KEY:
+        try:
+            return _anthropic_generate_bases(description, styles, tld_pref, count)
+        except Exception as e:
+            logger.warning('Anthropic fallback failed (%s); using rules', e)
+
+    logger.info('No LLM available; using rule-based name generator')
+    return rule_based_bases(description, styles, count)
+
+
+def _anthropic_generate_bases(description: str, styles: list[str], tld_pref: str, count: int) -> list[str]:
+    import anthropic  # type: ignore
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    msg = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=1024,
+        messages=[{
+            'role': 'user',
+            'content': LLM_PROMPT.format(
+                count=count,
+                description=description.strip()[:1000],
+                styles=', '.join(styles) if styles else 'modern',
+                tld_pref=tld_pref,
+            ),
+        }],
+    )
+    text = msg.content[0].text.strip()
+    text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.MULTILINE).strip()
+    bases = json.loads(text)
+    if not isinstance(bases, list):
+        raise ValueError('LLM did not return a list')
+    return [_clean(b) for b in bases if isinstance(b, str)][:count]
 
 
 _STOPWORDS = frozenset({
@@ -435,9 +502,17 @@ async def generate_for_visitor(
     fingerprint: Optional[str],
     ip_hash: Optional[str],
 ) -> dict:
-    """Full pipeline. Returns the response dict, or raises ValueError with a
-    structured error payload on hard limits / cooldowns.
+    """Full pipeline. Returns the response dict, or raises a structured error
+    on hard limits / cooldowns / hosted-LLM unavailability.
     """
+    # Per-IP daily cap protects the hosted LLM from scripted abuse that rotates
+    # visitor_ids — checked first, since IP is harder to spoof than a cookie.
+    if daily_count_ip(ip_hash) >= HOSTED_IP_DAILY_LIMIT:
+        raise HostedDailyCapError('ip', HOSTED_IP_DAILY_LIMIT)
+    # Per-visitor daily cap drives signup conversion.
+    if daily_count_visitor(visitor_id, fingerprint) >= HOSTED_VISITOR_DAILY_LIMIT:
+        raise HostedDailyCapError('visitor', HOSTED_VISITOR_DAILY_LIMIT)
+
     pre = aggregate_usage(visitor_id, fingerprint, ip_hash)
     pre_tier = tier_for_count(pre['count'])
     cooldown = cooldown_remaining_ms(pre_tier, pre['last_at'])
@@ -448,7 +523,7 @@ async def generate_for_visitor(
     new_count = pre['count'] + 1
     tier = tier_for_count(new_count)
 
-    bases = llm_generate_bases(description, styles, tld_pref, count=18)
+    bases = await llm_generate_bases_async(description, styles, tld_pref, count=18)
     domains = expand_to_domains(bases, tld_pref, cap=FULL_RESULT_COUNT)
 
     raw = await check_domains_anon(domains) if domains else []
@@ -513,3 +588,14 @@ class CooldownError(Exception):
     def __init__(self, retry_after_ms: int):
         self.retry_after_ms = retry_after_ms
         super().__init__(f'Cooldown active, retry in {retry_after_ms}ms')
+
+
+class HostedDailyCapError(Exception):
+    """Anonymous visitor has hit the hosted-LLM daily cap. The route surfaces
+    this as a 429 with `signup_url` so the FE can render its soft paywall.
+
+    `scope` is "visitor" or "ip" — the FE messages slightly differently."""
+    def __init__(self, scope: str, daily_limit: int):
+        self.scope = scope
+        self.daily_limit = daily_limit
+        super().__init__(f'Hosted LLM {scope} daily cap reached ({daily_limit})')

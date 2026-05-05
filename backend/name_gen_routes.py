@@ -16,6 +16,8 @@ from auth import JWTUser, jwt_auth
 from name_gen import (
     BYOK_DAILY_LIMIT,
     CooldownError,
+    HOSTED_VISITOR_DAILY_LIMIT,
+    HostedDailyCapError,
     SIGNUP_URL,
     aggregate_usage,
     check_domains_anon,
@@ -81,6 +83,24 @@ async def generate_names(
             visitor_id=x_visitor_id,
             fingerprint=x_visitor_fingerprint,
             ip_hash=ip_hash,
+        )
+    except HostedDailyCapError as e:
+        # FE renders soft paywall: signup OR BYOK. The two scopes share a
+        # single response shape; the FE ignores `scope` and treats both as
+        # "you've hit today's free limit, here are your two paths forward".
+        msg = (
+            f'You have used your {e.daily_limit} free AI generations today.'
+            if e.scope == 'visitor'
+            else 'Free generation limit reached for your network today.'
+        )
+        return JSONResponse(
+            {
+                'detail': msg,
+                'signup_url': SIGNUP_URL,
+                'daily_limit': e.daily_limit,
+                'cap_scope': e.scope,
+            },
+            status_code=429,
         )
     except CooldownError as e:
         return JSONResponse(
