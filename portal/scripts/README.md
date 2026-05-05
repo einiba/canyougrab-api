@@ -40,10 +40,27 @@ export GITHUB_TOKEN=$(gh auth token)
 
 Or pass inline: `GITHUB_TOKEN=$(gh auth token) npm run sync-shared`.
 
-### Why vendor instead of CI sync
+### CI auto-sync (in `docker-build-prod.yml`)
 
-Vendoring keeps Docker builds offline and deterministic — the synced files
-are part of the build context. Future improvement: move sync into the
-GitHub Actions workflow with a deploy key or PAT secret, so that a portal
-build at any SHA also fetches the matching shared SHA. For v1 the manual
-flow above is simple and visible in PRs.
+Once the `SHARED_SYNC_TOKEN` repo secret is configured, every portal
+build automatically re-vendors `src/shared/` from canyougrab-site at the
+SHA in `.shared-source-sha` before `docker build` runs. The vendored
+copy in the repo becomes a fallback only.
+
+Setup:
+
+1. Create a fine-grained GitHub PAT with **Contents: read** on
+   `einiba/canyougrab-site`.
+2. Add it to **both** `einiba/canyougrab-api` and
+   `ericismaking/canyougrab-api` as the `SHARED_SYNC_TOKEN` secret.
+
+If the secret is absent the CI step logs a notice and skips, so the
+existing committed copy is used. After verifying CI works, you can drop
+the vendored `portal/src/shared/` from the repo and add it to
+`.gitignore` — the workflow will always re-vendor at build time.
+
+### Why we still keep the local script
+
+`npm run sync-shared` remains the right tool when you want to validate
+locally before pushing the SHA bump. CI re-runs the same script, so the
+behaviour matches.

@@ -54,6 +54,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Re-vendor shared name-generator at pinned SHA (best-effort)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.SHARED_SYNC_TOKEN }}
+        run: |
+          cd portal
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "SHARED_SYNC_TOKEN not set — skipping re-vendor; using committed copy."
+            echo "Set the SHARED_SYNC_TOKEN repo secret to a fine-grained PAT with"
+            echo "Contents:read on einiba/canyougrab-site to enable automatic re-vendor."
+            exit 0
+          fi
+          echo "Re-vendoring portal/src/shared from canyougrab-site@$(cat scripts/.shared-source-sha)"
+          node scripts/sync-shared.mjs
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
