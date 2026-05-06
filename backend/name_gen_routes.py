@@ -58,9 +58,9 @@ async def generate_names(
     Body: {description: str, styles: [str], tld_preference: str, count: int}
     """
     description = (body.get('description') or '').strip()
-    if len(description) < 10:
+    if len(description) < 3:
         return JSONResponse(
-            {'detail': 'Description must be at least 10 characters.'},
+            {'detail': 'Description must be at least 3 characters.'},
             status_code=400,
         )
 
