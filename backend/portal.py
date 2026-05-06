@@ -60,3 +60,56 @@ async def portal_check_bulk(
     # Import here to avoid circular import (app imports portal)
     from app import do_bulk_check
     return await do_bulk_check(consumer_id, plan, domains)
+
+
+# ── Starred domains ─────────────────────────────────────────────────────────
+
+@router.get('/names/starred')
+def portal_list_starred(user: JWTUser = Depends(jwt_auth)):
+    """Return all domains the user has starred, newest first."""
+    from name_starred import list_stars
+    return {'stars': list_stars(user.sub)}
+
+
+@router.post('/names/star')
+def portal_toggle_star(
+    body: dict = Body(...),
+    user: JWTUser = Depends(jwt_auth),
+):
+    """Idempotent toggle. Body: {domain, base?, tld?, available?, source_list_id?}."""
+    domain = (body.get('domain') or '').strip().lower()
+    if not domain or len(domain) > 255:
+        return JSONResponse({'detail': 'domain is required'}, status_code=400)
+
+    from name_starred import toggle_star
+    try:
+        result = toggle_star(
+            user_sub=user.sub,
+            domain=domain,
+            base=body.get('base'),
+            tld=body.get('tld'),
+            available=body.get('available'),
+            source_list_id=body.get('source_list_id'),
+        )
+    except Exception as e:
+        logger.exception('toggle_star failed: %s', e)
+        return JSONResponse({'detail': 'Failed to toggle star'}, status_code=500)
+    return result
+
+
+@router.post('/names/star/claim')
+def portal_claim_stars(
+    body: dict = Body(...),
+    user: JWTUser = Depends(jwt_auth),
+):
+    """Bulk-attach anonymous stars (carried over from browser localStorage)
+    to the now-authenticated user. Idempotent.
+    Body: {items: [{domain, base?, tld?, available?, source_list_id?}, ...]}.
+    """
+    items = body.get('items') or []
+    if not isinstance(items, list):
+        return JSONResponse({'detail': 'items must be a list'}, status_code=400)
+
+    from name_starred import claim_anon_stars
+    inserted = claim_anon_stars(user.sub, items[:200])  # hard cap on batch size
+    return {'claimed': inserted}

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSignRequest } from "@/hooks/useSignRequest";
-import { API_BASE } from "@/config";
+import { API_BASE, AUTH0_AUDIENCE } from "@/config";
 import { claimPending } from "@/lib/anonClaim";
+import { claimAnonStars } from "@/shared/name-generator";
 
 export interface SessionData {
   tos_accepted_at: string | null;
@@ -18,6 +20,7 @@ export interface SessionData {
 export function useSession() {
   const { isAuthenticated, isPending } = useAuth();
   const { signRequest } = useSignRequest();
+  const { getAccessTokenSilently } = useAuth0();
   const called = useRef(false);
   const [session, setSession] = useState<SessionData | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -39,13 +42,21 @@ export function useSession() {
         // user created on the marketing site before signing up. Idempotent;
         // safe to run on every login.
         claimPending(signRequest).catch(() => { /* non-critical */ });
+        // Same idea for stars: any ★ the visitor placed while anon lives in
+        // localStorage; POST them to the server now so they show up in
+        // /starred. claimAnonStars no-ops when nothing is pending.
+        const getToken = () =>
+          getAccessTokenSilently({
+            authorizationParams: { audience: AUTH0_AUDIENCE },
+          });
+        claimAnonStars(getToken).catch(() => { /* non-critical */ });
       }
     } catch {
       // Non-critical — user record will be created on next request
     } finally {
       setSessionLoading(false);
     }
-  }, [signRequest]);
+  }, [signRequest, getAccessTokenSilently]);
 
   useEffect(() => {
     if (isPending || !isAuthenticated || called.current) return;

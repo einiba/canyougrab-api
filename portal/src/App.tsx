@@ -9,6 +9,7 @@ import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { DocsPage } from "@/pages/DocsPage";
 import { InteractivePage } from "@/pages/InteractivePage";
 import { SavedNamesPage } from "@/pages/SavedNamesPage";
+import { StarredPage } from "@/pages/StarredPage";
 import { SignupPage } from "@/pages/SignupPage";
 import { TermsPage } from "@/pages/TermsPage";
 
@@ -84,13 +85,23 @@ export default function App() {
           }
         />
         <Route
-          path="saved-names"
+          path="starred"
+          element={
+            <RequireAuth>
+              <StarredPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="history"
           element={
             <RequireAuth>
               <SavedNamesPage />
             </RequireAuth>
           }
         />
+        {/* Old path kept as a redirect for any bookmarks. */}
+        <Route path="saved-names" element={<Navigate to="/history" replace />} />
         <Route path="docs" element={<DocsPage />} />
         <Route path="terms" element={<TermsPage />} />
         <Route path="signup" element={<SignupPage />} />
