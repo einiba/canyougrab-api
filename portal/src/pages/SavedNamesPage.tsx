@@ -106,10 +106,13 @@ export function SavedNamesPage() {
           const available = results.filter((r) => r.available === true).length;
           const created = list.created_at ? new Date(list.created_at) : null;
           const shareUrl = `${MARKETING_BASE}/results/${list.id}`;
-          const previewDomains = results
-            .filter((r) => r.available === true)
-            .slice(0, 3)
-            .map((r) => r.domain);
+          // Server already sorts available → inconclusive → taken. Show top 3
+          // regardless of availability so the preview reflects what the user
+          // saw at generation time (not just the wins).
+          const previewDomains = results.slice(0, 3).map((r) => ({
+            domain: r.domain,
+            available: r.available,
+          }));
           return (
             <li
               key={list.id}
@@ -121,15 +124,33 @@ export function SavedNamesPage() {
                     &ldquo;{list.description}&rdquo;
                   </p>
                   {previewDomains.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {previewDomains.map((d) => (
-                        <code key={d} className="px-2 py-0.5 rounded bg-muted/50 text-xs text-foreground">
-                          {d}
-                        </code>
-                      ))}
-                      {available > previewDomains.length && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                      {previewDomains.map((d) => {
+                        const tone =
+                          d.available === true
+                            ? "bg-primary/10 text-primary"
+                            : d.available === false
+                            ? "bg-muted/40 text-muted-foreground line-through"
+                            : "bg-muted/40 text-muted-foreground";
+                        return (
+                          <code
+                            key={d.domain}
+                            className={`px-2 py-0.5 rounded text-xs ${tone}`}
+                            title={
+                              d.available === true
+                                ? "Available"
+                                : d.available === false
+                                ? "Taken"
+                                : "Inconclusive"
+                            }
+                          >
+                            {d.domain}
+                          </code>
+                        );
+                      })}
+                      {results.length > previewDomains.length && (
                         <span className="text-xs text-muted-foreground self-center">
-                          +{available - previewDomains.length} more
+                          +{results.length - previewDomains.length} more
                         </span>
                       )}
                     </div>
