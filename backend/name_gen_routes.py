@@ -152,7 +152,10 @@ async def check_only(
     domains = body.get('domains') or []
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'detail': 'Provide a non-empty domains array.'}, status_code=400)
-    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:50]
+    # Pipeline supports up to 100 domains per job (see valkey_client.create_split_job).
+    # Was previously capped at 50, which silently dropped the tail of BYOK 100-name
+    # requests and made the front-end render the missing rows as "inconclusive".
+    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:100]
     if not domains:
         return JSONResponse({'detail': 'No valid domains supplied.'}, status_code=400)
     if not x_visitor_id:
