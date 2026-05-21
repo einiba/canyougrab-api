@@ -71,6 +71,13 @@ async def generate_names(
     if tld_pref not in ('com_only', 'tech', 'global', 'any'):
         tld_pref = 'any'
 
+    # Result count: clamp to [1, 100]. Frontend offers 20 (free), 50/100 (BYOK).
+    try:
+        count = int(body.get('count') or 20)
+    except (TypeError, ValueError):
+        count = 20
+    count = max(1, min(count, 100))
+
     user = jwt_auth_optional(request)
     is_authenticated = user is not None
 
@@ -93,6 +100,7 @@ async def generate_names(
             ip_hash=ip_hash,
             is_authenticated=is_authenticated,
             user_sub=user.sub if user else None,
+            count=count,
         )
     except HostedDailyCapError as e:
         # FE renders soft paywall: signup OR BYOK. The two scopes share a

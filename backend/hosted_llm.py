@@ -162,7 +162,9 @@ async def _call(description: str, styles: list[str], tld_pref: str, count: int) 
             {'role': 'system', 'content': _SYSTEM_PROMPT},
             {'role': 'user', 'content': _user_prompt(description, styles, tld_pref, count)},
         ],
-        'max_tokens': 512,
+        # Budget enough tokens for up to ~100 short bases (avg ~10 chars +
+        # JSON quoting/commas → ~4 tokens each).
+        'max_tokens': max(512, 8 * max(1, count)),
         'temperature': 0.9,
     }
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as client:

@@ -517,6 +517,7 @@ async def generate_for_visitor(
     ip_hash: Optional[str],
     is_authenticated: bool = False,
     user_sub: Optional[str] = None,
+    count: int = 20,
 ) -> dict:
     """Full pipeline. Returns the response dict, or raises a structured error
     on hard limits / cooldowns / hosted-LLM unavailability.
@@ -551,8 +552,11 @@ async def generate_for_visitor(
         new_count = 0
         tier = 'curious'
 
-    bases = await llm_generate_bases_async(description, styles, tld_pref, count=18)
-    domains = expand_to_domains(bases, tld_pref, cap=FULL_RESULT_COUNT)
+    # Ask the LLM for enough bases to fill `count` domains across the selected
+    # TLD bucket — worst case (1 TLD) we need `count` bases, so just request
+    # `count` regardless of bucket size. Capped at 100 by the route.
+    bases = await llm_generate_bases_async(description, styles, tld_pref, count=count)
+    domains = expand_to_domains(bases, tld_pref, cap=count)
 
     raw = await check_domains_anon(domains) if domains else []
     by_domain = {r['domain']: r for r in raw}
