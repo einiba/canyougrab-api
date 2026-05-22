@@ -480,10 +480,12 @@ def expand_to_domains(bases: list[str], tld_pref: str, cap: int) -> list[str]:
 # ── Domain availability via existing job pipeline ──────────────────────────
 
 POLL_INTERVAL = 0.3
-# 200-name batches push the WHOIS pipeline; 30s is too tight and leaves
-# unfinished domains as null/inconclusive in the FE. Match the /check/bulk
-# default (45s) with headroom for the larger batch.
-POLL_TIMEOUT = 60.0
+# 500-name batches (largest plan-driven batch) push the WHOIS pipeline hard;
+# unfinished domains come back as null/inconclusive in the FE. Cap below
+# nginx's default proxy_read_timeout (60s) so the connection isn't closed
+# while we still have a chance to return partial results — better to surface
+# whatever finished than 504 the whole request.
+POLL_TIMEOUT = 55.0
 
 
 async def check_domains_anon(domains: list[str]) -> list[dict]:

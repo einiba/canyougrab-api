@@ -71,12 +71,14 @@ async def generate_names(
     if tld_pref not in ('com_only', 'tech', 'global', 'any'):
         tld_pref = 'any'
 
-    # Result count: clamp to [1, 200]. Plans expose 20 / 50 / 100 / 200.
+    # Result count: clamp to [1, 500]. Plans expose 20 / 100 / 200 / 500.
+    # Capping below the largest plan chip causes the FE to display the trimmed
+    # tail as "inconclusive" (server-truncated entries map to available=null).
     try:
         count = int(body.get('count') or 20)
     except (TypeError, ValueError):
         count = 20
-    count = max(1, min(count, 200))
+    count = max(1, min(count, 500))
 
     user = jwt_auth_optional(request)
     is_authenticated = user is not None
@@ -152,11 +154,11 @@ async def check_only(
     domains = body.get('domains') or []
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'detail': 'Provide a non-empty domains array.'}, status_code=400)
-    # Cap matches the largest plan-driven batch (200, Business). Anything beyond is
-    # silently dropped. Was previously 50 → bumped to 100 → now 200 to match the FE
-    # selector. The split-job pipeline batches across RDAP + WHOIS sub-jobs so 200
-    # mixed domains comfortably fit.
-    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:200]
+    # Cap matches the largest plan-driven batch (500, Business). Anything beyond is
+    # silently dropped. When the FE sends >cap, the unchecked tail comes back missing
+    # and the FE labels each missing entry "inconclusive" — keep this aligned with
+    # the largest count chip in the UI selector.
+    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:500]
     if not domains:
         return JSONResponse({'detail': 'No valid domains supplied.'}, status_code=400)
     if not x_visitor_id:
