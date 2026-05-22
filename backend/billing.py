@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from auth import JWTUser, jwt_auth
 from plans import get_plan, get_plan_by_stripe_price, get_plans
 from queries import get_db_conn
+from users import set_marketing_preference, upsert_user
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,27 @@ PORTAL_URL = os.environ.get('PORTAL_URL', 'https://portal.canyougrab.it')
 
 class CheckoutRequest(BaseModel):
     plan: str
+    marketing_opt_in: Optional[bool] = None
+
+
+def _record_marketing_choice_from_plan(user: JWTUser, plan_id: str, opt_in: Optional[bool]):
+    """Persist a marketing-email choice captured during plan selection.
+
+    A `None` value means the request did not include the field (older client
+    or admin call); leave the preference untouched in that case.
+    """
+    if opt_in is None:
+        return
+    upsert_user(
+        auth0_sub=user.sub,
+        email=user.email,
+        name=user.name,
+        email_verified=user.email_verified,
+    )
+    try:
+        set_marketing_preference(user.sub, bool(opt_in), source=f'pricing:{plan_id}')
+    except Exception as e:
+        logger.warning('failed to record marketing pref during checkout (%s): %s', user.sub[:20], e)
 
 
 @billing_router.post('/checkout')
@@ -154,6 +176,8 @@ def create_checkout(body: CheckoutRequest, user: JWTUser = Depends(jwt_auth)):
     if not plan_info.get('stripe_price_id'):
         paid_plans = [n for n, p in get_plans().items() if p.get('stripe_price_id')]
         raise HTTPException(status_code=400, detail=f'Invalid plan: {plan}. Valid: {paid_plans}')
+
+    _record_marketing_choice_from_plan(user, plan, body.marketing_opt_in)
 
     price_id = plan_info['stripe_price_id']
     customer_id = _find_or_create_customer(user.sub, user.email)
@@ -187,10 +211,18 @@ def create_portal(user: JWTUser = Depends(jwt_auth)):
 
 # ── Card on file (Free+ upgrade via Stripe Checkout in setup mode) ──
 
+class SetupCardRequest(BaseModel):
+    marketing_opt_in: Optional[bool] = None
+
+
 @billing_router.post('/setup-card')
-def setup_card(user: JWTUser = Depends(jwt_auth)):
+def setup_card(
+    body: SetupCardRequest = SetupCardRequest(),
+    user: JWTUser = Depends(jwt_auth),
+):
     """Create a Stripe Checkout session in setup mode to collect a card.
     Redirects to Stripe's hosted page — we never touch card details."""
+    _record_marketing_choice_from_plan(user, 'free_plus', body.marketing_opt_in)
     customer_id = _find_or_create_customer(user.sub, user.email)
 
     session = _stripe_request('POST', 'checkout/sessions', {

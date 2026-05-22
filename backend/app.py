@@ -33,6 +33,7 @@ from link_accounts import router as link_accounts_router
 from health import router as health_router
 from name_gen_routes import router as name_gen_router
 from share_routes import router as share_router
+from marketing import router as marketing_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -64,6 +65,47 @@ def _startup():
         import logging
         logging.getLogger(__name__).warning('Failed to populate TLD sets: %s', e)
 
+    _apply_marketing_columns()
+
+
+def _apply_marketing_columns():
+    """Idempotently add marketing-opt-in columns to public.users.
+
+    Stands in for a migration runner — the columns are tiny, the statement
+    is IF NOT EXISTS, and the API role owns the schema. Mirrors
+    backend/migrations/017_marketing_opt_in.sql.
+    """
+    import logging
+    from queries import get_db_conn
+
+    log = logging.getLogger(__name__)
+    statements = (
+        """
+        ALTER TABLE public.users
+          ADD COLUMN IF NOT EXISTS marketing_opt_in           boolean      NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS marketing_opt_in_at        timestamptz,
+          ADD COLUMN IF NOT EXISTS marketing_opt_in_source    text,
+          ADD COLUMN IF NOT EXISTS marketing_unsubscribed_at  timestamptz
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS users_marketing_marketable_idx
+          ON public.users (marketing_opt_in_at DESC)
+          WHERE marketing_opt_in = true AND marketing_unsubscribed_at IS NULL
+        """,
+    )
+    try:
+        conn = get_db_conn()
+        try:
+            with conn.cursor() as cur:
+                for stmt in statements:
+                    cur.execute(stmt)
+            conn.commit()
+        finally:
+            conn.close()
+        log.info('marketing opt-in columns ensured on public.users')
+    except Exception as e:
+        log.error('failed to ensure marketing columns: %s', e)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
@@ -83,6 +125,7 @@ app.include_router(link_accounts_router)
 app.include_router(health_router)
 app.include_router(name_gen_router)
 app.include_router(share_router)
+app.include_router(marketing_router)
 
 
 def _request_origin(request: Request) -> str:

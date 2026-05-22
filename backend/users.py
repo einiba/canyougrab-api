@@ -135,6 +135,107 @@ def get_user_email(auth0_sub: str) -> str:
     return user['email'] if user else ''
 
 
+def get_marketing_preference(auth0_sub: str) -> dict:
+    """Return the marketing-email preference for the given user.
+
+    Always returns a dict so callers can render a stable shape; defaults to
+    opt_in=False if the user row does not exist yet (caller will usually
+    upsert before reaching this).
+    """
+    if not auth0_sub:
+        return {'opt_in': False, 'opt_in_at': None, 'unsubscribed_at': None, 'source': None}
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT marketing_opt_in,
+                       marketing_opt_in_at,
+                       marketing_opt_in_source,
+                       marketing_unsubscribed_at
+                FROM users WHERE auth0_sub = %s
+            """, (auth0_sub,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return {'opt_in': False, 'opt_in_at': None, 'unsubscribed_at': None, 'source': None}
+
+    return {
+        'opt_in': bool(row[0]) and row[3] is None,
+        'opt_in_at': row[1].isoformat() if row[1] else None,
+        'source': row[2],
+        'unsubscribed_at': row[3].isoformat() if row[3] else None,
+    }
+
+
+def set_marketing_preference(auth0_sub: str, opt_in: bool, source: str = '') -> dict:
+    """Record a marketing opt-in or opt-out for the user.
+
+    opt_in=True   → set marketing_opt_in=true, stamp marketing_opt_in_at=NOW(),
+                    clear marketing_unsubscribed_at.
+    opt_in=False  → set marketing_opt_in=false, stamp marketing_unsubscribed_at=NOW()
+                    (preserving the prior marketing_opt_in_at for audit).
+
+    Returns the resulting preference dict, same shape as get_marketing_preference.
+    No-op when auth0_sub is empty; returns the empty default in that case.
+    """
+    if not auth0_sub:
+        return {'opt_in': False, 'opt_in_at': None, 'unsubscribed_at': None, 'source': None}
+
+    safe_source = (source or '')[:64]
+
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            if opt_in:
+                cur.execute("""
+                    UPDATE users
+                       SET marketing_opt_in           = true,
+                           marketing_opt_in_at        = NOW(),
+                           marketing_opt_in_source    = %s,
+                           marketing_unsubscribed_at  = NULL,
+                           updated_at                 = NOW()
+                     WHERE auth0_sub = %s
+                    RETURNING marketing_opt_in,
+                              marketing_opt_in_at,
+                              marketing_opt_in_source,
+                              marketing_unsubscribed_at
+                """, (safe_source, auth0_sub))
+            else:
+                cur.execute("""
+                    UPDATE users
+                       SET marketing_opt_in           = false,
+                           marketing_unsubscribed_at  = NOW(),
+                           marketing_opt_in_source    = COALESCE(NULLIF(%s, ''), marketing_opt_in_source),
+                           updated_at                 = NOW()
+                     WHERE auth0_sub = %s
+                    RETURNING marketing_opt_in,
+                              marketing_opt_in_at,
+                              marketing_opt_in_source,
+                              marketing_unsubscribed_at
+                """, (safe_source, auth0_sub))
+            row = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error('Failed to set marketing preference for %s: %s', auth0_sub[:20], e)
+        raise
+    finally:
+        conn.close()
+
+    if not row:
+        return {'opt_in': False, 'opt_in_at': None, 'unsubscribed_at': None, 'source': None}
+
+    return {
+        'opt_in': bool(row[0]) and row[3] is None,
+        'opt_in_at': row[1].isoformat() if row[1] else None,
+        'source': row[2],
+        'unsubscribed_at': row[3].isoformat() if row[3] else None,
+    }
+
+
 def merge_user_data(primary_sub: str, secondary_sub: str) -> bool:
     """Reassign all data from secondary_sub to primary_sub after Auth0 account linking.
 
