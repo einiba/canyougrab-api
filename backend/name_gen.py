@@ -23,7 +23,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from queries import get_db_conn
-from valkey_client import create_split_job, get_job_status, get_job_results
+from valkey_client import (
+    create_split_job,
+    get_job_results,
+    get_job_status,
+    get_partial_job_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -480,17 +485,22 @@ def expand_to_domains(bases: list[str], tld_pref: str, cap: int) -> list[str]:
 # ── Domain availability via existing job pipeline ──────────────────────────
 
 POLL_INTERVAL = 0.3
-# 500-name batches (largest plan-driven batch) push the WHOIS pipeline hard;
-# unfinished domains come back as null/inconclusive in the FE. Cap below
-# nginx's default proxy_read_timeout (60s) so the connection isn't closed
-# while we still have a chance to return partial results — better to surface
-# whatever finished than 504 the whole request.
-POLL_TIMEOUT = 55.0
+# 1000-name batches (largest plan-driven batch) push the WHOIS pipeline hard;
+# unfinished domains come back as null/inconclusive in the FE. The prod K8s
+# ingress runs proxy-read-timeout at 3600s, so we can afford a generous
+# window here. With BATCH_CONCURRENCY=25 per fleet and the RDAP/WHOIS split,
+# 1000 mixed .com domains generally complete in 30-60s; 120s gives plenty
+# of headroom before falling back to whatever partial results landed.
+POLL_TIMEOUT = 120.0
 
 
 async def check_domains_anon(domains: list[str]) -> list[dict]:
     """Run domains through the same job pipeline as /api/check/bulk, but
     without quota tracking. Used only for trial-gated anonymous traffic.
+
+    On timeout, drains whatever the split sub-jobs have finished and returns
+    a partial result set rather than `[]` — losing only the un-resolved tail
+    instead of blanking every domain to "inconclusive" in the FE.
     """
     job_id = str(uuid.uuid4())
     consumer = f'anon:{job_id[:8]}'
@@ -506,9 +516,14 @@ async def check_domains_anon(domains: list[str]) -> list[dict]:
             return get_job_results(job_id) or []
         if job['status'] == 'failed':
             logger.warning('Anon domain check failed: %s', job.get('error'))
-            return []
-    logger.warning('Anon domain check timed out for job %s', job_id[:8])
-    return []
+            return get_partial_job_results(job_id)
+    partial = get_partial_job_results(job_id)
+    resolved = sum(1 for r in partial if r.get('available') is not None)
+    logger.warning(
+        'Anon domain check timed out for job %s — returning %d/%d partial results (%d resolved)',
+        job_id[:8], len(partial), len(domains), resolved,
+    )
+    return partial
 
 
 # ── Top-level pipeline ─────────────────────────────────────────────────────

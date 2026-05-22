@@ -390,6 +390,55 @@ def get_job_results(job_id: str) -> list:
     return json.loads(results_json)
 
 
+def get_partial_job_results(job_id: str) -> list:
+    """Drain whatever results are currently available for a (possibly still
+    in-flight) split job. Sub-jobs that have completed contribute their
+    results; gaps stay missing rather than being filled with error placeholders
+    so the FE can distinguish "we never checked this" from "we checked it and
+    couldn't tell". Caller decides how to render the gaps.
+
+    Falls back to the regular `results` field for single-queue (non-split) jobs.
+    """
+    r = get_valkey()
+    parent_key = f'job:{job_id}'
+    if not r.exists(parent_key):
+        return []
+
+    # Single-queue job — just return whatever's already aggregated.
+    sub_jobs_json = r.hget(parent_key, 'sub_jobs')
+    if not sub_jobs_json:
+        results_json = r.hget(parent_key, 'results')
+        return json.loads(results_json) if results_json else []
+
+    sub_jobs = json.loads(sub_jobs_json)
+    domain_count = int(r.hget(parent_key, 'domain_count') or 0)
+    merged: list = [None] * domain_count
+
+    for sj_key in sub_jobs:
+        sj_data = r.hgetall(sj_key)
+        if sj_data.get('status') != 'completed':
+            continue
+        sj_results = json.loads(sj_data.get('results', '[]'))
+        sj_indices = json.loads(sj_data.get('indices', '[]'))
+        for idx, result in zip(sj_indices, sj_results):
+            if 0 <= idx < domain_count:
+                merged[idx] = result
+
+    # Backfill any gaps with the domain string so the caller knows what we
+    # didn't get to (rest of the dict stays empty/null).
+    domains_json = r.hget(parent_key, 'domains')
+    all_domains = json.loads(domains_json) if domains_json else []
+    for i in range(domain_count):
+        if merged[i] is None:
+            merged[i] = {
+                'domain': all_domains[i] if i < len(all_domains) else 'unknown',
+                'available': None,
+                'confidence': 'low',
+                'source': 'pending',
+            }
+    return merged
+
+
 def claim_job(job_key: str) -> dict | None:
     """Mark job as processing and return its domains and queued_at.
     Returns dict with 'domains' and 'queued_at', or None if expired."""
