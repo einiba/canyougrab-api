@@ -480,7 +480,10 @@ def expand_to_domains(bases: list[str], tld_pref: str, cap: int) -> list[str]:
 # ── Domain availability via existing job pipeline ──────────────────────────
 
 POLL_INTERVAL = 0.3
-POLL_TIMEOUT = 30.0
+# 200-name batches push the WHOIS pipeline; 30s is too tight and leaves
+# unfinished domains as null/inconclusive in the FE. Match the /check/bulk
+# default (45s) with headroom for the larger batch.
+POLL_TIMEOUT = 60.0
 
 
 async def check_domains_anon(domains: list[str]) -> list[dict]:

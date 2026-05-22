@@ -71,12 +71,12 @@ async def generate_names(
     if tld_pref not in ('com_only', 'tech', 'global', 'any'):
         tld_pref = 'any'
 
-    # Result count: clamp to [1, 100]. Frontend offers 20 (free), 50/100 (BYOK).
+    # Result count: clamp to [1, 200]. Plans expose 20 / 50 / 100 / 200.
     try:
         count = int(body.get('count') or 20)
     except (TypeError, ValueError):
         count = 20
-    count = max(1, min(count, 100))
+    count = max(1, min(count, 200))
 
     user = jwt_auth_optional(request)
     is_authenticated = user is not None
@@ -152,10 +152,11 @@ async def check_only(
     domains = body.get('domains') or []
     if not isinstance(domains, list) or not domains:
         return JSONResponse({'detail': 'Provide a non-empty domains array.'}, status_code=400)
-    # Pipeline supports up to 100 domains per job (see valkey_client.create_split_job).
-    # Was previously capped at 50, which silently dropped the tail of BYOK 100-name
-    # requests and made the front-end render the missing rows as "inconclusive".
-    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:100]
+    # Cap matches the largest plan-driven batch (200, Business). Anything beyond is
+    # silently dropped. Was previously 50 → bumped to 100 → now 200 to match the FE
+    # selector. The split-job pipeline batches across RDAP + WHOIS sub-jobs so 200
+    # mixed domains comfortably fit.
+    domains = [d for d in domains if isinstance(d, str) and 3 <= len(d) <= 255][:200]
     if not domains:
         return JSONResponse({'detail': 'No valid domains supplied.'}, status_code=400)
     if not x_visitor_id:
