@@ -418,20 +418,34 @@ async def llm_generate_bases_async(description: str, styles: list[str], tld_pref
     if len(bases) < count and bases:
         prefixes = ('try', 'get', 'go', 'my', 'use', 'the', 'with', 'on', 'best')
         suffixes = ('hq', 'ly', 'io', 'ai', 'app', 'co', 'pro', 'lab', 'kit', 'hub', 'now', 'box')
-        synth: list[str] = []
         snapshot = list(bases)
+        synth_pf: list[str] = []
         for b in snapshot:
             for s in suffixes:
-                synth.append((b + s)[:20])
+                synth_pf.append((b + s)[:20])
             for p in prefixes:
-                synth.append((p + b)[:20])
-        if len(snapshot) + len(synth) < count:
-            for a in snapshot:
-                for b in snapshot:
+                synth_pf.append((p + b)[:20])
+        _extend(c for c in synth_pf if 3 <= len(c) <= 20)
+
+        # If still short, pairwise-concatenate from the now-augmented base
+        # set. Capped to the first 200 items to keep the loop bounded.
+        if len(bases) < count:
+            augmented = list(bases[:200])
+            for a in augmented:
+                for b in augmented:
                     if a == b:
                         continue
-                    synth.append((a + b)[:20])
-        _extend(c for c in synth if 3 <= len(c) <= 20)
+                    cand = (a + b)[:20]
+                    if not (3 <= len(cand) <= 20):
+                        continue
+                    if cand in seen:
+                        continue
+                    seen.add(cand)
+                    bases.append(cand)
+                    if len(bases) >= count:
+                        break
+                if len(bases) >= count:
+                    break
 
     return bases
 
