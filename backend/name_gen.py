@@ -359,32 +359,81 @@ Return ONLY a JSON array of strings, no commentary. Example: ["frondly", "treeki
 async def llm_generate_bases_async(description: str, styles: list[str], tld_pref: str, count: int) -> list[str]:
     """Async path: prefer the hosted home LLM, fall back to Anthropic, then rule-based.
 
-    The hosted LLM is the primary anon-mode generator. Anthropic stays wired as a
-    legacy fallback for environments that have ANTHROPIC_API_KEY set but not
-    HOME_LLM_API_KEY. Both fall back to rule-based on any failure so the
-    endpoint never hard-fails for the visitor.
+    The hosted model saturates at ~20-30 names per call regardless of asked
+    count, so for larger counts we fan out parallel calls and dedupe. If the
+    union still falls short of `count`, we top up from Anthropic (when
+    configured), rule-based heuristics, and finally a mechanical
+    prefix/suffix expansion so the caller actually gets what they asked for.
     """
-    # Hosted home-LLM path
+    bases: list[str] = []
+    seen: set[str] = set()
+
+    def _extend(items) -> None:
+        for b in items or ():
+            if not isinstance(b, str):
+                continue
+            if b in seen:
+                continue
+            seen.add(b)
+            bases.append(b)
+            if len(bases) >= count:
+                return
+
+    # Hosted home-LLM path — fan out parallel calls for large counts.
     try:
         from hosted_llm import generate_bases as hosted_generate, is_configured
         if is_configured():
-            bases = await hosted_generate(description, styles, tld_pref, count)
-            if bases:
-                return bases
-            logger.info('Hosted LLM returned no bases; falling back')
+            PER_CALL = 30
+            n_calls = min(12, max(1, (count * 3 // 2 + PER_CALL - 1) // PER_CALL))
+            calls = [hosted_generate(description, styles, tld_pref, PER_CALL) for _ in range(n_calls)]
+            results = await asyncio.gather(*calls, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning('Hosted LLM call failed: %s', type(r).__name__)
+                    continue
+                _extend(r)
+                if len(bases) >= count:
+                    return bases
+            logger.info('Hosted LLM batched: %d unique from %d calls (asked %d)',
+                        len(bases), n_calls, count)
     except Exception as e:
         # HostedQueueFullError, HostedUnavailableError, network, etc.
-        logger.warning('Hosted LLM unavailable (%s); falling back', type(e).__name__)
+        logger.warning('Hosted LLM unavailable (%s); continuing with fallbacks', type(e).__name__)
 
-    # Anthropic legacy fallback
-    if ANTHROPIC_API_KEY:
+    # Anthropic legacy fallback — top up only what's missing.
+    if len(bases) < count and ANTHROPIC_API_KEY:
         try:
-            return _anthropic_generate_bases(description, styles, tld_pref, count)
+            _extend(_anthropic_generate_bases(description, styles, tld_pref, count))
+            if len(bases) >= count:
+                return bases
         except Exception as e:
-            logger.warning('Anthropic fallback failed (%s); using rules', e)
+            logger.warning('Anthropic fallback failed (%s); continuing', e)
 
-    logger.info('No LLM available; using rule-based name generator')
-    return rule_based_bases(description, styles, count)
+    # Rule-based heuristic top-up.
+    if len(bases) < count:
+        _extend(rule_based_bases(description, styles, count))
+
+    # Mechanical prefix/suffix combinations of bases we have, so high
+    # batch sizes (200/500/1000) actually return that many candidates.
+    if len(bases) < count and bases:
+        prefixes = ('try', 'get', 'go', 'my', 'use', 'the', 'with', 'on', 'best')
+        suffixes = ('hq', 'ly', 'io', 'ai', 'app', 'co', 'pro', 'lab', 'kit', 'hub', 'now', 'box')
+        synth: list[str] = []
+        snapshot = list(bases)
+        for b in snapshot:
+            for s in suffixes:
+                synth.append((b + s)[:20])
+            for p in prefixes:
+                synth.append((p + b)[:20])
+        if len(snapshot) + len(synth) < count:
+            for a in snapshot:
+                for b in snapshot:
+                    if a == b:
+                        continue
+                    synth.append((a + b)[:20])
+        _extend(c for c in synth if 3 <= len(c) <= 20)
+
+    return bases
 
 
 def _anthropic_generate_bases(description: str, styles: list[str], tld_pref: str, count: int) -> list[str]:
